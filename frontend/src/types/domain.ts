@@ -84,6 +84,7 @@ export interface ChartConfig {
   measures: string[];
   labelField?: string;
   previewRows?: DataRow[];
+  fieldLabels?: Record<string, string>;
 }
 
 export interface ChartWidget {

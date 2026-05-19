@@ -64,14 +64,18 @@ export function ChartConfigPanel() {
     setDatasetError(null);
     void api
       .datasetFields(datasetId)
-      .then(setDatasetFields)
+      .then((fields) => {
+        setDatasetFields(fields);
+        if (selectedWidget) {
+          updateWidgetConfig(selectedWidget.id, { fieldLabels: buildFieldLabels(fields) });
+        }
+      })
       .catch((err) => setDatasetError(err instanceof Error ? err.message : '加载字段失败'));
-  }, [selectedWidget?.config.datasetId]);
+  }, [selectedWidget?.config.datasetId, selectedWidget?.id, updateWidgetConfig]);
 
   if (!selectedWidget) {
     return (
       <div className="empty-config">
-        <Typography.Title level={5}>配置区</Typography.Title>
         <Typography.Text type="secondary">请选择画布中的图表节点。</Typography.Text>
       </div>
     );
@@ -84,6 +88,10 @@ export function ChartConfigPanel() {
     }
     const next = [...current, field.name];
     changeFields(target, next);
+    if (target === 'measures' && current.length === 0) {
+      form.setFieldValue('labelField', field.label);
+      updateWidgetConfig(selectedWidget.id, { labelField: field.label });
+    }
   };
 
   const changeFields = (target: 'dimensions' | 'measures', fields: string[]) => {
@@ -134,7 +142,8 @@ export function ChartConfigPanel() {
       datasetName: undefined,
       dimensions: [],
       measures: [],
-      previewRows: []
+      previewRows: [],
+      fieldLabels: {}
     });
     updateWidgetConfig(selectedWidget.id, {
       datasetType,
@@ -142,14 +151,15 @@ export function ChartConfigPanel() {
       datasetName: undefined,
       dimensions: [],
       measures: [],
-      previewRows: []
+      previewRows: [],
+      fieldLabels: {}
     });
   };
 
   const changeDataset = (datasetId?: number) => {
     const datasetName = datasets.find((item) => item.id === datasetId)?.name;
-    form.setFieldsValue({ datasetId, datasetName, dimensions: [], measures: [], previewRows: [] });
-    updateWidgetConfig(selectedWidget.id, { datasetId, datasetName, dimensions: [], measures: [], previewRows: [] });
+    form.setFieldsValue({ datasetId, datasetName, dimensions: [], measures: [], previewRows: [], fieldLabels: {} });
+    updateWidgetConfig(selectedWidget.id, { datasetId, datasetName, dimensions: [], measures: [], previewRows: [], fieldLabels: {} });
   };
 
   const canUpdatePreview = Boolean(
@@ -157,85 +167,86 @@ export function ChartConfigPanel() {
   );
 
   return (
-    <div className="config-panel">
-      <Typography.Title level={5}>{chartTypeLabels[selectedWidget.type]}配置</Typography.Title>
+    <div className="config-panel-shell">
       <Form<ChartConfig>
         form={form}
+        className="render-config-form"
         layout="vertical"
         onValuesChange={(_, values) => updateWidgetConfig(selectedWidget.id, values)}
       >
+        <Typography.Text className="selected-chart-type" type="secondary">
+          {chartTypeLabels[selectedWidget.type]}
+        </Typography.Text>
         <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
           <Input />
         </Form.Item>
-        <Form.Item name="datasetType" label="数据源类型" rules={[{ required: true, message: '请选择数据源类型' }]}>
-          <Select
-            allowClear
-            placeholder="先选择数据源类型"
-            options={[
-              { value: 'standard', label: datasetTypeLabels.standard },
-              { value: 'direct', label: datasetTypeLabels.direct }
-            ]}
-            onChange={changeDatasetType}
-          />
-        </Form.Item>
-        <Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}>
-          <Select
-            allowClear
-            showSearch
-            placeholder="选择数据集后加载字段"
-            optionFilterProp="label"
-            options={datasets.map((dataset) => ({
-              value: dataset.id,
-              label: `${dataset.name} · ${dataset.sourceName}`
-            }))}
-            onChange={changeDataset}
-          />
-        </Form.Item>
-        {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
-        {datasetFields && (
-          <div className="field-pool">
-            <div className="field-pool-header">
-              <DatabaseOutlined />
-              <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
+        <section className="config-section">
+          <Typography.Text className="config-section-title">数据源配置</Typography.Text>
+          <Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}>
+            <Select
+              allowClear
+              showSearch
+              disabled={!selectedWidget.config.datasetType}
+              placeholder="先在右侧选择数据源类型"
+              optionFilterProp="label"
+              options={datasets.map((dataset) => ({
+                value: dataset.id,
+                label: `${dataset.name} · ${dataset.sourceName}`
+              }))}
+              onChange={changeDataset}
+            />
+          </Form.Item>
+          {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
+          {datasetFields && (
+            <div className="field-pool">
+              <div className="field-pool-header">
+                <DatabaseOutlined />
+                <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
+              </div>
+              <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
+              <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
             </div>
-            <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
-            <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
+          )}
+        </section>
+        <section className="config-section">
+          <Typography.Text className="config-section-title">图表配置</Typography.Text>
+          <Form.Item label="维度">
+            <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('dimensions', event)}>
+              <Select
+                mode="multiple"
+                placeholder="双击或拖拽维度字段到这里"
+                options={dimensionOptions}
+                value={selectedWidget.config.dimensions ?? []}
+                onChange={(fields) => changeFields('dimensions', fields)}
+              />
+            </div>
+          </Form.Item>
+          <Form.Item label="指标">
+            <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('measures', event)}>
+              <Select
+                mode="multiple"
+                placeholder="双击或拖拽指标字段到这里"
+                options={measureOptions}
+                value={selectedWidget.config.measures ?? []}
+                onChange={(fields) => changeFields('measures', fields)}
+              />
+            </div>
+          </Form.Item>
+          <Form.Item name="labelField" label="标签字段">
+            <Input placeholder="销售额" />
+          </Form.Item>
+          <div className="config-switch-row">
+            <Form.Item name="showLabel" label="显示标签" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item name="showTooltip" label="显示 Tooltip" valuePropName="checked">
+              <Switch />
+            </Form.Item>
+            <Form.Item name="showScrollbar" label="显示 Scrollbar" valuePropName="checked">
+              <Switch />
+            </Form.Item>
           </div>
-        )}
-        <Form.Item label="维度">
-          <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('dimensions', event)}>
-            <Select
-              mode="multiple"
-              placeholder="双击或拖拽维度字段到这里"
-              options={dimensionOptions}
-              value={selectedWidget.config.dimensions ?? []}
-              onChange={(fields) => changeFields('dimensions', fields)}
-            />
-          </div>
-        </Form.Item>
-        <Form.Item label="指标">
-          <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('measures', event)}>
-            <Select
-              mode="multiple"
-              placeholder="双击或拖拽指标字段到这里"
-              options={measureOptions}
-              value={selectedWidget.config.measures ?? []}
-              onChange={(fields) => changeFields('measures', fields)}
-            />
-          </div>
-        </Form.Item>
-        <Form.Item name="labelField" label="标签字段">
-          <Input placeholder="value" />
-        </Form.Item>
-        <Form.Item name="showLabel" label="显示标签" valuePropName="checked">
-          <Switch />
-        </Form.Item>
-        <Form.Item name="showTooltip" label="显示 Tooltip" valuePropName="checked">
-          <Switch />
-        </Form.Item>
-        <Form.Item name="showScrollbar" label="显示 Scrollbar" valuePropName="checked">
-          <Switch />
-        </Form.Item>
+        </section>
         <Button
           block
           type="primary"
@@ -252,8 +263,30 @@ export function ChartConfigPanel() {
           </Typography.Text>
         ) : null}
       </Form>
+      <aside className="data-source-rail">
+        <Typography.Text className="data-source-rail-label" type="secondary">
+          数据源类型
+        </Typography.Text>
+        <Select
+          allowClear
+          value={selectedWidget.config.datasetType}
+          placeholder="先选类型"
+          options={[
+            { value: 'standard', label: datasetTypeLabels.standard },
+            { value: 'direct', label: datasetTypeLabels.direct }
+          ]}
+          onChange={changeDatasetType}
+        />
+      </aside>
     </div>
   );
+}
+
+function buildFieldLabels(fields: DatasetFieldSet): Record<string, string> {
+  return [...fields.dimensions, ...fields.measures].reduce<Record<string, string>>((labels, field) => {
+    labels[field.name] = field.label;
+    return labels;
+  }, {});
 }
 
 interface FieldListProps {

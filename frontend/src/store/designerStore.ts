@@ -131,7 +131,7 @@ function createWidget(type: ChartType, x: number, y: number): ChartWidget {
       showScrollbar: type.includes('Table'),
       dimensions: [],
       measures: [],
-      labelField: 'value'
+      labelField: '销售额'
     }
   };
 }

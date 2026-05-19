@@ -1,32 +1,24 @@
 import {
   BarChartOutlined,
-  CheckOutlined,
   LineChartOutlined,
   PieChartOutlined,
   PlusOutlined,
-  SaveOutlined,
   TableOutlined
 } from '@ant-design/icons';
-import { Alert, Button, Card, Drawer, Form, Input, message, Select, Space, Spin, Typography } from 'antd';
+import { Alert, Button, Drawer, Input, message, Space, Spin, Typography } from 'antd';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import { ChartConfigPanel } from '@/features/charts/ChartConfigPanel';
 import { DesignerCanvas } from '@/features/charts/DesignerCanvas';
-import { chartStatusOptions, chartTypeGroups, groupToSelectOptions } from '@/features/charts/chartUtils';
+import { chartTypeGroups } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
 import { useDesignerStore } from '@/store/designerStore';
-import type { ChartGroup, ChartStatus, ChartTag, ChartType } from '@/types/domain';
+import { useEditorToolbarStore } from '@/store/editorToolbarStore';
+import type { ChartStatus, ChartType } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
-
-interface MetaFormValues {
-  description: string;
-  status: ChartStatus;
-  groupId?: number;
-  tagIds: number[];
-}
 
 const chartIcons: Partial<Record<ChartType, ReactNode>> = {
   detailTable: <TableOutlined />,
@@ -42,11 +34,9 @@ export function ChartEditorPage() {
   const navigate = useNavigate();
   const params = useParams();
   const chartId = params.id ? Number(params.id) : undefined;
-  const [metaForm] = Form.useForm<MetaFormValues>();
-  const [groups, setGroups] = useState<ChartGroup[]>([]);
-  const [tags, setTags] = useState<ChartTag[]>([]);
   const [loading, setLoading] = useState(Boolean(chartId));
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const user = useAuthStore((state) => state.user);
@@ -58,17 +48,13 @@ export function ChartEditorPage() {
   const setMeta = useDesignerStore((state) => state.setMeta);
   const addWidget = useDesignerStore((state) => state.addWidget);
   const toPayload = useDesignerStore((state) => state.toPayload);
-
-  const groupOptions = useMemo(() => groupToSelectOptions(groups), [groups]);
-  const tagOptions = useMemo(() => tags.map((tag) => ({ value: tag.id, label: tag.name })), [tags]);
+  const setToolbar = useEditorToolbarStore((state) => state.setToolbar);
+  const clearToolbar = useEditorToolbarStore((state) => state.clearToolbar);
 
   const bootstrap = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const [groupData, tagData] = await Promise.all([api.groups(), api.tags()]);
-      setGroups(groupData);
-      setTags(tagData);
       if (chartId) {
         const chart = await api.chart(chartId);
         load({
@@ -95,24 +81,6 @@ export function ChartEditorPage() {
     void bootstrap();
   }, [bootstrap]);
 
-  useEffect(() => {
-    metaForm.setFieldsValue({
-      description: meta.description,
-      status: meta.status,
-      groupId: meta.groupId ?? undefined,
-      tagIds: meta.tagIds
-    });
-  }, [meta, metaForm]);
-
-  const handleMetaChange = (_changed: Partial<MetaFormValues>, values: MetaFormValues) => {
-    setMeta({
-      description: values.description,
-      status: values.status,
-      groupId: values.groupId ?? null,
-      tagIds: values.tagIds ?? []
-    });
-  };
-
   const handleDashboardNameBlur = () => {
     if (!meta.name.trim()) {
       setMeta({ name: '未命名仪表盘' });
@@ -124,34 +92,107 @@ export function ChartEditorPage() {
     setPaletteOpen(false);
   };
 
-  const handleSave = async () => {
+  const saveDashboard = useCallback(async (statusOverride?: ChartStatus) => {
     if (!canWrite) {
       message.warning('当前角色只读，不能保存仪表盘');
-      return;
+      return null;
     }
     if (!meta.name.trim()) {
       message.warning('请输入仪表盘名称');
-      return;
+      return null;
     }
     if (widgets.length === 0) {
       message.warning('请至少添加一个图表');
-      return;
+      return null;
     }
-    await metaForm.validateFields();
+    const payload = toPayload();
+    if (statusOverride) {
+      payload.status = statusOverride;
+    }
+    const saved = chartId ? await api.updateChart(chartId, payload) : await api.createChart(payload);
+    if (statusOverride) {
+      setMeta({ status: statusOverride });
+    }
+    if (!chartId) {
+      navigate(`/charts/${saved.id}/edit`, { replace: true });
+    }
+    return saved;
+  }, [canWrite, chartId, meta.name, navigate, setMeta, toPayload, widgets.length]);
+
+  const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const payload = toPayload();
-      const saved = chartId ? await api.updateChart(chartId, payload) : await api.createChart(payload);
-      message.success('仪表盘已保存');
-      if (!chartId) {
-        navigate(`/charts/${saved.id}/edit`, { replace: true });
+      const saved = await saveDashboard();
+      if (saved) {
+        message.success('仪表盘已保存');
       }
     } catch (err) {
       message.error(err instanceof Error ? err.message : '保存仪表盘失败');
     } finally {
       setSaving(false);
     }
-  };
+  }, [saveDashboard]);
+
+  const handlePublish = useCallback(async () => {
+    if (!canWrite) {
+      message.warning('当前角色只读，不能发布仪表盘');
+      return;
+    }
+    setPublishing(true);
+    try {
+      if (chartId) {
+        await api.publishChart(chartId);
+        setMeta({ status: 'published' });
+      } else {
+        await saveDashboard('published');
+      }
+      message.success('仪表盘已发布');
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '发布仪表盘失败');
+    } finally {
+      setPublishing(false);
+    }
+  }, [canWrite, chartId, saveDashboard, setMeta]);
+
+  const handleSaveAndPublish = useCallback(async () => {
+    setSaving(true);
+    try {
+      const saved = await saveDashboard('published');
+      if (saved) {
+        message.success('仪表盘已保存并发布');
+      }
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '保存并发布失败');
+    } finally {
+      setSaving(false);
+    }
+  }, [saveDashboard]);
+
+  useEffect(() => {
+    if (loading) {
+      clearToolbar();
+      return;
+    }
+
+    setToolbar({
+      visible: true,
+      statusLabel: meta.status === 'published' ? '已发布' : meta.status === 'archived' ? '已归档' : '草稿',
+      canWrite,
+      saving,
+      publishing,
+      onSave: () => {
+        void handleSave();
+      },
+      onPublish: () => {
+        void handlePublish();
+      },
+      onSaveAndPublish: () => {
+        void handleSaveAndPublish();
+      }
+    });
+
+    return clearToolbar;
+  }, [canWrite, clearToolbar, handlePublish, handleSave, handleSaveAndPublish, loading, meta.status, publishing, saving, setToolbar]);
 
   if (loading) {
     return (
@@ -179,45 +220,18 @@ export function ChartEditorPage() {
             一个仪表盘可放置多个图表；添加图表后，在右侧配置数据源、维度和指标，再点击更新渲染。
           </Typography.Text>
         </div>
-        <Space>
-          <Button icon={<PlusOutlined />} disabled={!canWrite} onClick={() => setPaletteOpen(true)}>
-            添加图表
-          </Button>
-          <Button onClick={() => navigate('/charts')}>返回列表</Button>
-          <Button type="primary" icon={<SaveOutlined />} loading={saving} disabled={!canWrite} onClick={handleSave}>
-            保存
-          </Button>
-        </Space>
       </header>
 
       <div className="editor-layout">
-        <DesignerCanvas />
+        <div className="editor-canvas-shell">
+          <Button className="chart-drawer-trigger" icon={<PlusOutlined />} disabled={!canWrite} onClick={() => setPaletteOpen(true)}>
+            图表
+          </Button>
+          <DesignerCanvas />
+        </div>
 
         <aside className="inspector-panel">
-          <Card className="meta-card" title="资产信息">
-            <Form<MetaFormValues>
-              form={metaForm}
-              layout="vertical"
-              disabled={!canWrite}
-              onValuesChange={handleMetaChange}
-            >
-              <Form.Item name="description" label="描述">
-                <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} />
-              </Form.Item>
-              <Form.Item name="status" label="状态" rules={[{ required: true, message: '请选择状态' }]}>
-                <Select options={chartStatusOptions} />
-              </Form.Item>
-              <Form.Item name="groupId" label="分组目录">
-                <Select allowClear options={groupOptions} />
-              </Form.Item>
-              <Form.Item name="tagIds" label="标签">
-                <Select mode="multiple" allowClear options={tagOptions} />
-              </Form.Item>
-            </Form>
-          </Card>
-          <Card className="config-card" title={<span><CheckOutlined /> 渲染配置</span>}>
-            <ChartConfigPanel />
-          </Card>
+          <ChartConfigPanel />
         </aside>
       </div>
 

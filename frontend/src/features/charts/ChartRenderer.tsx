@@ -2,7 +2,6 @@ import { Chart as G2Chart } from '@antv/g2';
 import { PivotSheet, TableSheet } from '@antv/s2';
 import { useEffect, useRef } from 'react';
 
-import { sampleRows } from '@/features/charts/chartUtils';
 import type { ChartWidget, DataRow } from '@/types/domain';
 
 interface ChartRendererProps {
@@ -26,6 +25,9 @@ interface G2Mark {
 }
 
 export function ChartRenderer({ widget }: ChartRendererProps) {
+  if (!widget.config.previewRows?.length) {
+    return <ChartPlaceholder widget={widget} />;
+  }
   if (widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable') {
     return <S2Renderer widget={widget} />;
   }
@@ -46,9 +48,10 @@ function G2Renderer({ widget }: ChartRendererProps) {
     });
     const runtime = chart as unknown as G2Runtime;
     const rows = normalizedRows(widget);
-    const xField = widget.config.dimensions[0] ?? 'category';
-    const colorField = widget.config.dimensions[1] ?? widget.config.dimensions[0] ?? 'category';
-    const yField = widget.config.measures[0] ?? 'value';
+    const xField = displayFieldName(widget, widget.config.dimensions[0] ?? 'category');
+    const colorField = displayFieldName(widget, widget.config.dimensions[1] ?? widget.config.dimensions[0] ?? 'category');
+    const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
+    const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
 
     let mark: G2Mark | null = null;
     if (widget.type === 'line') {
@@ -79,9 +82,9 @@ function G2Renderer({ widget }: ChartRendererProps) {
     }
 
     if (mark) {
-      mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures : [yField] } : false);
+      mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField] } : false);
       if (widget.config.showLabel) {
-        mark.label({ text: widget.config.labelField || yField });
+        mark.label({ text: labelField });
       }
     }
     runtime.render();
@@ -89,7 +92,17 @@ function G2Renderer({ widget }: ChartRendererProps) {
     return () => {
       runtime.destroy();
     };
-  }, [widget.config.dimensions, widget.config.labelField, widget.config.measures, widget.config.previewRows, widget.config.showLabel, widget.config.showTooltip, widget.type]);
+  }, [
+    widget.config.dimensions,
+    widget.config.labelField,
+    widget.config.measures,
+    widget.config.previewRows,
+    widget.config.showLabel,
+    widget.config.showTooltip,
+    widget.height,
+    widget.type,
+    widget.width
+  ]);
 
   return (
     <div className="chart-renderer">
@@ -108,8 +121,8 @@ function S2Renderer({ widget }: ChartRendererProps) {
     }
 
     const rows = normalizedRows(widget);
-    const dimensions = widget.config.dimensions.length ? widget.config.dimensions : ['category'];
-    const measures = widget.config.measures.length ? widget.config.measures : ['value', 'lastYear'];
+    const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
+    const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
     const dataCfg =
       widget.type === 'detailTable'
         ? {
@@ -121,7 +134,7 @@ function S2Renderer({ widget }: ChartRendererProps) {
         : {
             fields: {
               rows: [dimensions[0]],
-              columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? 'month'],
+              columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? displayFieldName(widget, 'month')],
               values: measures,
               valueInCols: true
             },
@@ -160,5 +173,62 @@ function S2Renderer({ widget }: ChartRendererProps) {
 }
 
 function normalizedRows(widget: ChartWidget): DataRow[] {
-  return widget.config.previewRows?.length ? widget.config.previewRows : sampleRows;
+  return (widget.config.previewRows ?? []).map((row) => {
+    const next: DataRow = {};
+    Object.entries(row).forEach(([key, value]) => {
+      next[displayFieldName(widget, key)] = value;
+    });
+    return next;
+  });
+}
+
+const defaultFieldLabels: Record<string, string> = {
+  category: '业务域',
+  region: '区域',
+  month: '月份',
+  product: '产品线',
+  value: '销售额',
+  lastYear: '去年同期',
+  profit: '利润',
+  orders: '订单数'
+};
+
+function displayFieldName(widget: ChartWidget, field: string): string {
+  return widget.config.fieldLabels?.[field] ?? defaultFieldLabels[field] ?? field;
+}
+
+function ChartPlaceholder({ widget }: ChartRendererProps) {
+  const isTable = widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable';
+  const isPie = widget.type === 'pie';
+  const isLine = widget.type === 'line';
+
+  return (
+    <div className="chart-renderer">
+      <div className="chart-title">{widget.config.title}</div>
+      <div className={`chart-placeholder ${isTable ? 'table' : isPie ? 'pie' : isLine ? 'line' : 'bar'}`}>
+        {isTable && (
+          <>
+            <div className="placeholder-table-head" />
+            {Array.from({ length: 5 }, (_, index) => (
+              <div key={index} className="placeholder-table-row">
+                <span />
+                <span />
+                <span />
+              </div>
+            ))}
+          </>
+        )}
+        {isPie && <div className="placeholder-pie" />}
+        {isLine && <div className="placeholder-line" />}
+        {!isTable && !isPie && !isLine && (
+          <div className="placeholder-bars">
+            {[46, 74, 58, 88, 66].map((height, index) => (
+              <span key={index} style={{ height: `${height}%` }} />
+            ))}
+          </div>
+        )}
+        <div className="placeholder-caption">配置数据源后点击更新图表</div>
+      </div>
+    </div>
+  );
 }
