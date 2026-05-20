@@ -1,12 +1,4 @@
-import {
-  BarChartOutlined,
-  LineChartOutlined,
-  PieChartOutlined,
-  PlusOutlined,
-  TableOutlined
-} from '@ant-design/icons';
-import { Alert, Button, Drawer, Input, message, Space, Spin, Typography } from 'antd';
-import type { ReactNode } from 'react';
+import { Alert, Button, Input, message, Space, Spin, Typography } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -20,16 +12,6 @@ import { useEditorToolbarStore } from '@/store/editorToolbarStore';
 import type { ChartStatus, ChartType } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
-const chartIcons: Partial<Record<ChartType, ReactNode>> = {
-  detailTable: <TableOutlined />,
-  pivotTable: <TableOutlined />,
-  comparisonTable: <TableOutlined />,
-  line: <LineChartOutlined />,
-  column: <BarChartOutlined />,
-  bar: <BarChartOutlined />,
-  pie: <PieChartOutlined />
-};
-
 export function ChartEditorPage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -38,7 +20,6 @@ export function ChartEditorPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [paletteOpen, setPaletteOpen] = useState(false);
   const user = useAuthStore((state) => state.user);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
   const meta = useDesignerStore((state) => state.meta);
@@ -89,7 +70,6 @@ export function ChartEditorPage() {
 
   const handleAddWidget = (type: ChartType) => {
     addWidget(type);
-    setPaletteOpen(false);
   };
 
   const saveDashboard = useCallback(async (statusOverride?: ChartStatus) => {
@@ -207,7 +187,6 @@ export function ChartEditorPage() {
       {loadError && <Alert type="error" showIcon message={loadError} />}
       <header className="editor-header">
         <div className="dashboard-title-editor">
-          <Typography.Text type="secondary">{chartId ? '编辑仪表盘' : '创建仪表盘'}</Typography.Text>
           <Input
             className="dashboard-name-input"
             value={meta.name}
@@ -216,17 +195,34 @@ export function ChartEditorPage() {
             onChange={(event) => setMeta({ name: event.target.value })}
             onBlur={handleDashboardNameBlur}
           />
-          <Typography.Text type="secondary">
-            一个仪表盘可放置多个图表；添加图表后，在右侧配置数据源、维度和指标，再点击更新渲染。
-          </Typography.Text>
         </div>
       </header>
 
       <div className="editor-layout">
+        <aside className="chart-type-sidebar" aria-label="新增图表类型">
+          <Typography.Text className="chart-type-sidebar-title">新增图表</Typography.Text>
+          <Space direction="vertical" size={14} className="chart-type-sidebar-body">
+            {chartTypeGroups.map((group) => (
+              <section key={group.key} className="chart-type-group">
+                <Typography.Title level={5}>{group.title}</Typography.Title>
+                <Space direction="vertical" className="full-width">
+                  {group.types.map((type) => (
+                    <Button
+                      key={type}
+                      className="palette-button"
+                      icon={<ChartTypeIcon type={type} />}
+                      disabled={!canWrite}
+                      onClick={() => handleAddWidget(type)}
+                    >
+                      {chartTypeLabels[type]}
+                    </Button>
+                  ))}
+                </Space>
+              </section>
+            ))}
+          </Space>
+        </aside>
         <div className="editor-canvas-shell">
-          <Button className="chart-drawer-trigger" icon={<PlusOutlined />} disabled={!canWrite} onClick={() => setPaletteOpen(true)}>
-            图表
-          </Button>
           <DesignerCanvas />
         </div>
 
@@ -234,36 +230,86 @@ export function ChartEditorPage() {
           <ChartConfigPanel />
         </aside>
       </div>
-
-      <Drawer
-        title="添加图表"
-        placement="left"
-        width={360}
-        open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
-        destroyOnClose
-      >
-        <Space direction="vertical" size={20} className="full-width">
-          {chartTypeGroups.map((group) => (
-            <section key={group.key} className="chart-type-group">
-              <Typography.Title level={5}>{group.title}</Typography.Title>
-              <Space direction="vertical" className="full-width">
-                {group.types.map((type) => (
-                  <Button
-                    key={type}
-                    className="palette-button"
-                    icon={chartIcons[type]}
-                    disabled={!canWrite}
-                    onClick={() => handleAddWidget(type)}
-                  >
-                    {chartTypeLabels[type]}
-                  </Button>
-                ))}
-              </Space>
-            </section>
-          ))}
-        </Space>
-      </Drawer>
     </div>
+  );
+}
+
+function ChartTypeIcon({ type }: { type: ChartType }) {
+  if (type === 'line') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#eef6ff" />
+          <path d="M6 19l5-5 4 3 7-8" fill="none" stroke="#1677ff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="6" cy="19" r="2" fill="#36cfc9" />
+          <circle cx="15" cy="17" r="2" fill="#9254de" />
+          <circle cx="22" cy="9" r="2" fill="#ff7a45" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (type === 'pie') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#fff7e6" />
+          <path d="M14 6a8 8 0 018 8h-8z" fill="#1677ff" />
+          <path d="M22 14a8 8 0 01-11.6 7.1L14 14z" fill="#52c41a" />
+          <path d="M10.4 21.1A8 8 0 0114 6v8z" fill="#fa8c16" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (type === 'bar') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#f6ffed" />
+          <rect x="7" y="8" width="14" height="4" rx="2" fill="#36cfc9" />
+          <rect x="7" y="13" width="10" height="4" rx="2" fill="#1677ff" />
+          <rect x="7" y="18" width="16" height="4" rx="2" fill="#9254de" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (type === 'column') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#f0f5ff" />
+          <rect x="7" y="14" width="4" height="7" rx="1.5" fill="#36cfc9" />
+          <rect x="12" y="10" width="4" height="11" rx="1.5" fill="#1677ff" />
+          <rect x="17" y="7" width="4" height="14" rx="1.5" fill="#9254de" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (type === 'comparisonTable') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#fff1f0" />
+          <rect x="7" y="8" width="6" height="12" rx="2" fill="#ff7a45" />
+          <rect x="15" y="11" width="6" height="9" rx="2" fill="#1677ff" />
+          <path d="M7 21h14" stroke="#8c8c8c" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+
+  return (
+    <span className="chart-type-icon" aria-hidden="true">
+      <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+        <rect x="3" y="3" width="22" height="22" rx="6" fill="#f9f0ff" />
+        <rect x="7" y="8" width="14" height="3" rx="1.5" fill="#1677ff" />
+        <rect x="7" y="13" width="5" height="3" rx="1.5" fill="#36cfc9" />
+        <rect x="14" y="13" width="7" height="3" rx="1.5" fill="#52c41a" />
+        <rect x="7" y="18" width="14" height="3" rx="1.5" fill="#9254de" />
+      </svg>
+    </span>
   );
 }
