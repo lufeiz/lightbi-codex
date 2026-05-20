@@ -98,10 +98,17 @@ export function ChartsPage() {
   const userOptions = useMemo(() => users.map((item) => ({ value: item.id, label: item.displayName })), [users]);
 
   const fetchDictionaries = useCallback(async () => {
-    const [groupData, tagData, userData] = await Promise.all([api.groups(), api.tags(), api.users()]);
-    setGroups(groupData);
-    setTags(tagData);
-    setUsers(userData);
+    try {
+      const [groupData, tagData, userData] = await Promise.all([api.groups(), api.tags(), api.users()]);
+      setGroups(groupData);
+      setTags(tagData);
+      setUsers(userData);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '加载筛选基础数据失败');
+      setGroups([]);
+      setTags([]);
+      setUsers([]);
+    }
   }, []);
 
   const fetchCharts = useCallback(async () => {
