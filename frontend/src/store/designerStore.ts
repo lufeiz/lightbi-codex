@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget } from '@/types/domain';
+import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardFilters } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
 interface DesignerMeta {
@@ -15,10 +15,13 @@ interface DesignerMeta {
 interface DesignerState {
   meta: DesignerMeta;
   widgets: ChartWidget[];
+  filters: DashboardFilters;
   selectedWidgetId: string | null;
   reset: () => void;
   load: (payload: Partial<DesignerMeta> & { config?: ChartDocument; type?: ChartType }) => void;
   setMeta: (meta: Partial<DesignerMeta>) => void;
+  setFilters: (filters: Partial<DashboardFilters>) => void;
+  resetFilters: () => void;
   addWidget: (type: ChartType) => void;
   selectWidget: (id: string | null) => void;
   syncPrimaryTitle: (title: string) => void;
@@ -35,12 +38,18 @@ const defaultMeta: DesignerMeta = {
   tagIds: []
 };
 
+const createDefaultFilters = (): DashboardFilters => ({
+  timeRange: null,
+  chartDimensionFilters: {}
+});
+
 export const useDesignerStore = create<DesignerState>((set, get) => ({
   meta: defaultMeta,
   widgets: [],
+  filters: createDefaultFilters(),
   selectedWidgetId: null,
   reset() {
-    set({ meta: defaultMeta, widgets: [], selectedWidgetId: null });
+    set({ meta: defaultMeta, widgets: [], filters: createDefaultFilters(), selectedWidgetId: null });
   },
   load(payload) {
     const widgets = payload.config?.widgets?.length ? payload.config.widgets : [];
@@ -55,15 +64,25 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         tagIds: payload.tagIds ?? []
       },
       widgets,
+      filters: normalizeFilters(payload.config?.filters, widgets),
       selectedWidgetId: widgets[0]?.id ?? null
     });
   },
   setMeta(meta) {
     set((state) => ({ meta: { ...state.meta, ...meta } }));
   },
+  setFilters(filters) {
+    set((state) => ({ filters: { ...state.filters, ...filters } }));
+  },
+  resetFilters() {
+    set({ filters: createDefaultFilters() });
+  },
   addWidget(type) {
-    const index = get().widgets.length;
-    const widget = createWidget(type, 72 + index * 24, 64 + index * 24);
+    const widgets = get().widgets;
+    const widget = createWidget(type, 0, 0);
+    const position = findOpenPosition(widget, widgets);
+    widget.x = position.x;
+    widget.y = position.y;
     set((state) => ({
       widgets: [...state.widgets, widget],
       selectedWidgetId: widget.id
@@ -88,7 +107,16 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
   },
   updateWidget(id, patch) {
     set((state) => ({
-      widgets: state.widgets.map((widget) => (widget.id === id ? { ...widget, ...patch } : widget))
+      widgets: state.widgets.map((widget) => {
+        if (widget.id !== id) {
+          return widget;
+        }
+        const nextWidget = { ...widget, ...patch };
+        if (hasGeometryPatch(patch) && hasOverlap(nextWidget, state.widgets.filter((item) => item.id !== id))) {
+          return widget;
+        }
+        return nextWidget;
+      })
     }));
   },
   updateWidgetConfig(id, patch) {
@@ -110,30 +138,151 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       type: primary?.type ?? 'line',
       config: {
         version: 1,
-        widgets: state.widgets
+        widgets: state.widgets,
+        filters: state.filters
       }
     };
   }
 }));
 
 function createWidget(type: ChartType, x: number, y: number): ChartWidget {
+  const isTable = type.includes('Table');
+  const isText = type === 'text';
+
   return {
     id: safeId(),
     type,
     x,
     y,
-    width: type.includes('Table') ? 520 : 440,
-    height: type.includes('Table') ? 320 : 300,
+    width: isText ? 360 : isTable ? 520 : 440,
+    height: isText ? 180 : isTable ? 320 : 300,
     config: {
       title: chartTypeLabels[type],
       showLabel: true,
       showTooltip: true,
-      showScrollbar: type.includes('Table'),
+      showScrollbar: isTable,
       dimensions: [],
       measures: [],
-      labelField: '销售额'
+      labelField: '销售额',
+      textContent: isText ? '输入文本内容' : undefined,
+      textHtml: isText ? '输入文本内容' : undefined
     }
   };
+}
+
+interface LegacyDashboardFilters extends Partial<DashboardFilters> {
+  dimensionField?: string;
+  dimensionValues?: string[];
+  dimensionFilters?: Array<{ field: string; values?: string[] }>;
+}
+
+function normalizeFilters(filters: LegacyDashboardFilters | undefined, widgets: ChartWidget[]): DashboardFilters {
+  if (!filters) {
+    return createDefaultFilters();
+  }
+
+  const chartDimensionFilters = normalizeChartDimensionFilters(filters.chartDimensionFilters);
+  const hasChartFilters = Object.keys(chartDimensionFilters).length > 0;
+
+  if (!hasChartFilters) {
+    const legacyFilters = normalizeLegacyDimensionFilters(filters);
+    const firstDataWidget = widgets.find((widget) => widget.type !== 'text');
+    if (firstDataWidget && legacyFilters.length) {
+      chartDimensionFilters[firstDataWidget.id] = legacyFilters;
+    }
+  }
+
+  return {
+    timeRange: Array.isArray(filters.timeRange) && filters.timeRange.length === 2 ? filters.timeRange : null,
+    chartDimensionFilters
+  };
+}
+
+function normalizeChartDimensionFilters(filters?: Record<string, Array<{ field: string; values?: string[] }>>) {
+  if (!filters) {
+    return {};
+  }
+  return Object.entries(filters).reduce<Record<string, Array<{ field: string; values: string[] }>>>((result, [widgetId, items]) => {
+    const nextItems = Array.isArray(items)
+      ? items
+          .filter((filter) => typeof filter.field === 'string' && filter.field.length > 0)
+          .map((filter) => ({
+            field: filter.field,
+            values: Array.isArray(filter.values) ? filter.values.map(String) : []
+          }))
+      : [];
+    if (nextItems.length) {
+      result[widgetId] = nextItems;
+    }
+    return result;
+  }, {});
+}
+
+function normalizeLegacyDimensionFilters(filters: LegacyDashboardFilters) {
+  if (Array.isArray(filters.dimensionFilters)) {
+    return filters.dimensionFilters
+      .filter((filter) => typeof filter.field === 'string' && filter.field.length > 0)
+      .map((filter) => ({
+        field: filter.field,
+        values: Array.isArray(filter.values) ? filter.values.map(String) : []
+      }));
+  }
+
+  if (!filters.dimensionField) {
+    return [];
+  }
+  return [
+    {
+      field: filters.dimensionField,
+      values: Array.isArray(filters.dimensionValues) ? filters.dimensionValues.map(String) : []
+    }
+  ];
+}
+
+const WIDGET_GAP = 24;
+const DEFAULT_WIDGET_X = 32;
+const DEFAULT_WIDGET_Y = 32;
+
+function findOpenPosition(widget: ChartWidget, widgets: ChartWidget[]): Pick<ChartWidget, 'x' | 'y'> {
+  if (widgets.length === 0) {
+    return { x: DEFAULT_WIDGET_X, y: DEFAULT_WIDGET_Y };
+  }
+
+  const sorted = [...widgets].sort((a, b) => a.y + a.height - (b.y + b.height));
+  const bottom = sorted.reduce((max, item) => Math.max(max, item.y + item.height), DEFAULT_WIDGET_Y);
+  const candidate = { ...widget, x: DEFAULT_WIDGET_X, y: bottom + WIDGET_GAP };
+
+  if (!hasOverlap(candidate, widgets)) {
+    return { x: candidate.x, y: candidate.y };
+  }
+
+  for (let y = DEFAULT_WIDGET_Y; y <= bottom + widget.height + WIDGET_GAP * 12; y += WIDGET_GAP) {
+    for (let x = DEFAULT_WIDGET_X; x <= 1440; x += widget.width + WIDGET_GAP) {
+      const next = { ...widget, x, y };
+      if (!hasOverlap(next, widgets)) {
+        return { x, y };
+      }
+    }
+  }
+
+  return { x: DEFAULT_WIDGET_X, y: bottom + widget.height + WIDGET_GAP };
+}
+
+function hasGeometryPatch(patch: Partial<ChartWidget>): boolean {
+  return patch.x !== undefined || patch.y !== undefined || patch.width !== undefined || patch.height !== undefined;
+}
+
+function hasOverlap(widget: ChartWidget, widgets: ChartWidget[]): boolean {
+  return widgets.some((item) => rectanglesOverlap(widget, item));
+}
+
+function rectanglesOverlap(a: ChartWidget, b: ChartWidget): boolean {
+  return !(
+    a.x + a.width + WIDGET_GAP <= b.x ||
+    b.x + b.width + WIDGET_GAP <= a.x ||
+    a.y + a.height + WIDGET_GAP <= b.y ||
+    b.y + b.height + WIDGET_GAP <= a.y
+  );
 }
 
 function safeId(): string {

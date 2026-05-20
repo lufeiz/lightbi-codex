@@ -357,6 +357,80 @@ a {
   box-shadow: none;
 }
 
+.dashboard-filter-bar {
+  display: grid;
+  grid-template-columns: auto minmax(300px, auto) auto minmax(220px, 1fr) auto;
+  flex: 0 0 auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px solid #dde4ef;
+  border-radius: 8px;
+}
+
+.filter-section-title {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  color: #172033;
+  font-weight: 650;
+}
+
+.filter-control-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+}
+
+.single-chart-filter-title {
+  padding-left: 6px;
+  border-left: 1px solid #d8e1ee;
+}
+
+.filter-value-select {
+  width: 220px;
+}
+
+.dimension-filter-control {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 8px;
+  background: #f8fbff;
+  border: 1px solid #dbe5f2;
+  border-radius: 8px;
+}
+
+.dimension-filter-label {
+  min-width: 38px;
+  color: #172033;
+  font-weight: 650;
+}
+
+.dimension-filter-control .ant-picker {
+  width: 264px;
+}
+
+.dimension-filter-control .ant-select-selector {
+  border-radius: 7px !important;
+}
+
+.empty-filter-tip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+}
+
+.filter-reset-button {
+  justify-self: end;
+}
+
 .editor-layout {
   display: grid;
   grid-template-columns: 184px minmax(0, 1fr) minmax(540px, 580px);
@@ -512,6 +586,30 @@ a {
   min-height: 0;
 }
 
+.text-widget-renderer {
+  justify-content: center;
+  padding: 18px;
+}
+
+.text-widget-content {
+  width: 100%;
+  overflow: hidden;
+  font-size: 22px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.text-widget-content b,
+.text-widget-content strong {
+  font-weight: 700;
+}
+
+.text-widget-content i,
+.text-widget-content em {
+  font-style: italic;
+}
+
 .chart-placeholder {
   position: relative;
   flex: 1 1 auto;
@@ -618,6 +716,10 @@ a {
   align-items: start;
 }
 
+.text-config-shell {
+  display: block;
+}
+
 .config-form-module {
   min-width: 0;
 }
@@ -664,8 +766,67 @@ a {
   gap: 8px;
 }
 
+.config-switch-row.two-columns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .config-switch-row .ant-form-item {
   margin-bottom: 10px;
+}
+
+.rich-text-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px;
+  margin-bottom: 10px;
+  background: #f6f8fb;
+  border: 1px solid #dce4f0;
+  border-radius: 8px;
+}
+
+.rich-text-color-control {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 32px;
+  color: #172033;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.rich-text-color-control:hover {
+  background: #eef3f9;
+}
+
+.rich-text-color-control input {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  cursor: pointer;
+  border: 0;
+}
+
+.rich-text-editor {
+  min-height: 220px;
+  padding: 12px;
+  overflow: auto;
+  color: #172033;
+  font-size: 18px;
+  line-height: 1.6;
+  background: #fff;
+  border: 1px solid #b8c6d8;
+  border-radius: 8px;
+  outline: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rich-text-editor:focus {
+  border-color: #1769e0;
+  box-shadow: 0 0 0 2px rgba(23, 105, 224, 0.12);
 }
 
 .data-source-module {
@@ -681,7 +842,7 @@ a {
   border-radius: 8px;
 }
 
-.data-source-rail-label {
+.data-source-field-label {
   font-size: 12px;
 }
 
@@ -692,6 +853,10 @@ a {
 .data-source-help {
   font-size: 12px;
   line-height: 1.5;
+}
+
+.data-source-field-pool {
+  margin-bottom: 0;
 }
 
 .field-pool {

@@ -1,7 +1,7 @@
-import { DatabaseOutlined, DragOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Alert, Button, Form, Input, message, Select, Space, Switch, Tag, Typography } from 'antd';
-import type { DragEvent } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { BoldOutlined, DatabaseOutlined, DragOutlined, FontColorsOutlined, ItalicOutlined, ReloadOutlined } from '@ant-design/icons';
+import { Alert, Button, Form, Input, message, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd';
+import type { ClipboardEvent, DragEvent } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '@/api/client';
 import { useDesignerStore } from '@/store/designerStore';
@@ -40,6 +40,7 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
   const [datasetFields, setDatasetFields] = useState<DatasetFieldSet | null>(null);
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [updatingPreview, setUpdatingPreview] = useState(false);
+  const isTextWidget = selectedWidget.type === 'text';
 
   const dimensionOptions = useMemo(
     () => (datasetFields?.dimensions ?? []).map((field) => ({ value: field.name, label: `${field.label} (${field.name})` })),
@@ -60,7 +61,7 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
 
   useEffect(() => {
     const datasetType = selectedWidget?.config.datasetType;
-    if (!datasetType) {
+    if (isTextWidget || !datasetType) {
       setDatasets([]);
       setDatasetFields(null);
       setDatasetError(null);
@@ -86,12 +87,12 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
     return () => {
       active = false;
     };
-  }, [selectedWidget?.config.datasetType]);
+  }, [isTextWidget, selectedWidget?.config.datasetType]);
 
   useEffect(() => {
     const widgetId = selectedWidget?.id;
     const datasetId = selectedWidget?.config.datasetId;
-    if (!datasetId) {
+    if (isTextWidget || !datasetId) {
       setDatasetFields(null);
       setDatasetError(null);
       return;
@@ -119,7 +120,7 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
     return () => {
       active = false;
     };
-  }, [selectedWidget?.config.datasetId, selectedWidget?.id, updateWidgetConfig]);
+  }, [isTextWidget, selectedWidget?.config.datasetId, selectedWidget?.id, updateWidgetConfig]);
 
   const addField = (target: 'dimensions' | 'measures', field: DatasetField) => {
     const current = selectedWidget.config[target] ?? [];
@@ -203,8 +204,12 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
   };
 
   const canUpdatePreview = Boolean(
-    selectedWidget.config.datasetId && selectedWidget.config.dimensions.length && selectedWidget.config.measures.length
+    !isTextWidget && selectedWidget.config.datasetId && selectedWidget.config.dimensions.length && selectedWidget.config.measures.length
   );
+
+  if (isTextWidget) {
+    return <RichTextConfigPanel selectedWidget={selectedWidget} onConfigChange={(patch) => updateWidgetConfig(selectedWidget.id, patch)} />;
+  }
 
   return (
     <div className="config-panel-shell">
@@ -221,34 +226,6 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
           <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
             <Input />
           </Form.Item>
-          <section className="config-section">
-            <Typography.Text className="config-section-title">数据源配置</Typography.Text>
-            <Form.Item name="datasetId" label="数据集" rules={[{ required: true, message: '请选择数据集' }]}>
-              <Select
-                allowClear
-                showSearch
-                disabled={!selectedWidget.config.datasetType}
-                placeholder="先在右侧选择数据源类型"
-                optionFilterProp="label"
-                options={datasets.map((dataset) => ({
-                  value: dataset.id,
-                  label: `${dataset.name} · ${dataset.sourceName}`
-                }))}
-                onChange={changeDataset}
-              />
-            </Form.Item>
-            {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
-            {datasetFields && (
-              <div className="field-pool">
-                <div className="field-pool-header">
-                  <DatabaseOutlined />
-                  <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
-                </div>
-                <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
-                <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
-              </div>
-            )}
-          </section>
           <section className="config-section">
             <Typography.Text className="config-section-title">图表配置</Typography.Text>
             <Form.Item label="维度">
@@ -307,7 +284,8 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
       </div>
       <div className="config-module-divider" />
       <aside className="data-source-module">
-        <Typography.Text className="data-source-rail-label" type="secondary">
+        <Typography.Text className="config-section-title">数据源配置</Typography.Text>
+        <Typography.Text className="data-source-field-label" type="secondary">
           数据源类型
         </Typography.Text>
         <Select
@@ -320,12 +298,157 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
           ]}
           onChange={changeDatasetType}
         />
+        <Typography.Text className="data-source-field-label" type="secondary">
+          数据集
+        </Typography.Text>
+        <Select
+          allowClear
+          showSearch
+          disabled={!selectedWidget.config.datasetType}
+          value={selectedWidget.config.datasetId}
+          placeholder="选择数据集"
+          optionFilterProp="label"
+          options={datasets.map((dataset) => ({
+            value: dataset.id,
+            label: `${dataset.name} · ${dataset.sourceName}`
+          }))}
+          onChange={changeDataset}
+        />
+        {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
+        {datasetFields && (
+          <div className="field-pool data-source-field-pool">
+            <div className="field-pool-header">
+              <DatabaseOutlined />
+              <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
+            </div>
+            <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
+            <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
+          </div>
+        )}
         <Typography.Text className="data-source-help" type="secondary">
           当前选择仅作用于选中的图表
         </Typography.Text>
       </aside>
     </div>
   );
+}
+
+interface RichTextConfigPanelProps {
+  selectedWidget: ChartWidget;
+  onConfigChange: (patch: Partial<ChartConfig>) => void;
+}
+
+function RichTextConfigPanel({ selectedWidget, onConfigChange }: RichTextConfigPanelProps) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const selectionRef = useRef<Range | null>(null);
+
+  useEffect(() => {
+    if (!editorRef.current) {
+      return;
+    }
+    editorRef.current.innerHTML = selectedWidget.config.textHtml || escapeHtml(selectedWidget.config.textContent || '输入文本内容');
+    selectionRef.current = null;
+  }, [selectedWidget.id]);
+
+  const saveSelection = () => {
+    const editor = editorRef.current;
+    const selection = window.getSelection();
+    if (!editor || !selection || selection.rangeCount === 0) {
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (editor.contains(range.commonAncestorContainer)) {
+      selectionRef.current = range.cloneRange();
+    }
+  };
+
+  const restoreSelection = () => {
+    const editor = editorRef.current;
+    const range = selectionRef.current;
+    if (!editor || !range) {
+      editor?.focus({ preventScroll: true });
+      return;
+    }
+    editor.focus({ preventScroll: true });
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  };
+
+  const syncEditorHtml = () => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+    onConfigChange({
+      textHtml: editor.innerHTML,
+      textContent: editor.innerText
+    });
+    saveSelection();
+  };
+
+  const runCommand = (command: 'bold' | 'italic' | 'foreColor', value?: string) => {
+    restoreSelection();
+    document.execCommand(command, false, value);
+    syncEditorHtml();
+  };
+
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    restoreSelection();
+    document.execCommand('insertText', false, event.clipboardData.getData('text/plain'));
+    syncEditorHtml();
+  };
+
+  return (
+    <div className="config-panel-shell text-config-shell">
+      <div className="config-form-module">
+        <Typography.Text className="selected-chart-type" type="secondary">
+          {chartTypeLabels[selectedWidget.type]}
+        </Typography.Text>
+        <section className="config-section">
+          <Typography.Text className="config-section-title">文本配置</Typography.Text>
+          <div className="rich-text-toolbar" aria-label="文本样式工具栏">
+            <Tooltip title="加粗选中文字">
+              <Button type="text" icon={<BoldOutlined />} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('bold')} />
+            </Tooltip>
+            <Tooltip title="斜体选中文字">
+              <Button type="text" icon={<ItalicOutlined />} onMouseDown={(event) => event.preventDefault()} onClick={() => runCommand('italic')} />
+            </Tooltip>
+            <Tooltip title="设置选中文字颜色">
+              <label className="rich-text-color-control" onMouseDown={saveSelection}>
+                <FontColorsOutlined />
+                <input type="color" defaultValue="#172033" onChange={(event) => runCommand('foreColor', event.target.value)} />
+              </label>
+            </Tooltip>
+          </div>
+          <div
+            ref={editorRef}
+            className="rich-text-editor"
+            role="textbox"
+            aria-label="文本内容"
+            contentEditable
+            suppressContentEditableWarning
+            onBlur={syncEditorHtml}
+            onInput={syncEditorHtml}
+            onKeyUp={saveSelection}
+            onMouseUp={saveSelection}
+            onPaste={handlePaste}
+          />
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('\n', '<br />');
 }
 
 function buildFieldLabels(fields: DatasetFieldSet): Record<string, string> {

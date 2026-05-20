@@ -1,11 +1,17 @@
 import { Chart as G2Chart } from '@antv/g2';
 import { PivotSheet, TableSheet } from '@antv/s2';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
-import type { ChartWidget, DataRow } from '@/types/domain';
+import type { ChartWidget, DashboardFilters, DataRow } from '@/types/domain';
 
 interface ChartRendererProps {
   widget: ChartWidget;
+  filters?: DashboardFilters;
+}
+
+interface ChartRuntimeProps {
+  widget: ChartWidget;
+  rows: DataRow[];
 }
 
 interface G2Runtime {
@@ -24,17 +30,23 @@ interface G2Mark {
   tooltip: (options: boolean | Record<string, unknown>) => G2Mark;
 }
 
-export function ChartRenderer({ widget }: ChartRendererProps) {
-  if (!widget.config.previewRows?.length) {
+export function ChartRenderer({ widget, filters }: ChartRendererProps) {
+  const filteredRows = useMemo(() => applyDashboardFilters(widget, filters), [filters, widget]);
+
+  if (widget.type === 'text') {
+    return <TextRenderer widget={widget} />;
+  }
+
+  if (!filteredRows.length) {
     return <ChartPlaceholder widget={widget} />;
   }
   if (widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable') {
-    return <S2Renderer widget={widget} />;
+    return <S2Renderer widget={widget} rows={filteredRows} />;
   }
-  return <G2Renderer widget={widget} />;
+  return <G2Renderer widget={widget} rows={filteredRows} />;
 }
 
-function G2Renderer({ widget }: ChartRendererProps) {
+function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -47,7 +59,7 @@ function G2Renderer({ widget }: ChartRendererProps) {
       autoFit: true
     });
     const runtime = chart as unknown as G2Runtime;
-    const rows = normalizedRows(widget);
+    const rows = normalizedRows(widget, rawRows);
     const primaryDimension = widget.config.dimensions[0] ?? 'category';
     const seriesDimension = widget.config.dimensions[1];
     const xField = displayFieldName(widget, primaryDimension);
@@ -59,7 +71,7 @@ function G2Renderer({ widget }: ChartRendererProps) {
     let mark: G2Mark | null = null;
     if (widget.type === 'line') {
       mark = runtime.line() as unknown as G2Mark;
-      mark.data(rows).encode('x', xField).encode('y', yField);
+      mark.data(intervalRows).encode('x', xField).encode('y', yField);
       if (colorField) {
         mark.encode('color', colorField);
       }
@@ -108,10 +120,10 @@ function G2Renderer({ widget }: ChartRendererProps) {
     widget.config.fieldLabels,
     widget.config.labelField,
     widget.config.measures,
-    widget.config.previewRows,
     widget.config.showLabel,
     widget.config.showTooltip,
     widget.height,
+    rawRows,
     widget.type,
     widget.width
   ]);
@@ -124,7 +136,7 @@ function G2Renderer({ widget }: ChartRendererProps) {
   );
 }
 
-function S2Renderer({ widget }: ChartRendererProps) {
+function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -132,7 +144,7 @@ function S2Renderer({ widget }: ChartRendererProps) {
       return undefined;
     }
 
-    const rows = normalizedRows(widget);
+    const rows = normalizedRows(widget, rawRows);
     const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
     const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
     const dataCfg =
@@ -178,10 +190,10 @@ function S2Renderer({ widget }: ChartRendererProps) {
     widget.config.dimensions,
     widget.config.fieldLabels,
     widget.config.measures,
-    widget.config.previewRows,
     widget.config.showScrollbar,
     widget.config.showTooltip,
     widget.height,
+    rawRows,
     widget.type,
     widget.width
   ]);
@@ -194,8 +206,18 @@ function S2Renderer({ widget }: ChartRendererProps) {
   );
 }
 
-function normalizedRows(widget: ChartWidget): DataRow[] {
-  return (widget.config.previewRows ?? []).map((row) => {
+function TextRenderer({ widget }: Pick<ChartRendererProps, 'widget'>) {
+  const contentHtml = widget.config.textHtml || escapeHtml(widget.config.textContent?.trim() || '输入文本内容');
+
+  return (
+    <div className="chart-renderer text-widget-renderer">
+      <div className="text-widget-content" dangerouslySetInnerHTML={{ __html: contentHtml }} />
+    </div>
+  );
+}
+
+function normalizedRows(widget: ChartWidget, rows: DataRow[]): DataRow[] {
+  return rows.map((row) => {
     const next: DataRow = {};
     Object.entries(row).forEach(([key, value]) => {
       next[displayFieldName(widget, key)] = value;
@@ -225,6 +247,95 @@ function collapseIntervalRows(rows: DataRow[], xField: string, yField: string, c
   return [...grouped.values()];
 }
 
+function applyDashboardFilters(widget: ChartWidget, filters?: DashboardFilters): DataRow[] {
+  const rows = widget.config.previewRows ?? [];
+  if (!filters || widget.type === 'text') {
+    return rows;
+  }
+
+  let nextRows = rows;
+  const widgetDimensionFilters = filters.chartDimensionFilters[widget.id] ?? [];
+  widgetDimensionFilters.forEach((filter) => {
+    if (!filter.values.length || !hasField(nextRows, filter.field)) {
+      return;
+    }
+    const allowedValues = new Set(filter.values);
+    nextRows = nextRows.filter((row) => allowedValues.has(String(row[filter.field] ?? '')));
+  });
+
+  if (filters.timeRange) {
+    const timeField = findTimeField(widget, nextRows);
+    if (timeField) {
+      nextRows = nextRows.filter((row) => valueInTimeRange(row[timeField], filters.timeRange as [string, string]));
+    }
+  }
+
+  return nextRows;
+}
+
+function hasField(rows: DataRow[], field: string): boolean {
+  return rows.some((row) => Object.prototype.hasOwnProperty.call(row, field));
+}
+
+function findTimeField(widget: ChartWidget, rows: DataRow[]): string | undefined {
+  const configuredFields = widget.config.dimensions.filter((field) => isTimeField(widget, field));
+  if (configuredFields.length) {
+    return configuredFields[0];
+  }
+  return Object.keys(rows[0] ?? {}).find((field) => isTimeField(widget, field));
+}
+
+function isTimeField(widget: ChartWidget, field: string): boolean {
+  const label = displayFieldName(widget, field);
+  return /date|time|month|year|day|dt/i.test(field) || /时间|日期|月份|年月|年份|年|月|日/.test(label);
+}
+
+function valueInTimeRange(value: DataRow[string], range: [string, string]): boolean {
+  const startDate = new Date(range[0]);
+  const endDate = new Date(range[1]);
+  const startTime = startDate.getTime();
+  const endTime = endDate.getTime();
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+    return true;
+  }
+
+  const valueTime = parseTimeValue(value, startDate.getFullYear());
+  if (valueTime === null) {
+    return true;
+  }
+  return valueTime >= startTime && valueTime <= endTime;
+}
+
+function parseTimeValue(value: DataRow[string], fallbackYear: number): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number') {
+    if (value >= 1 && value <= 12) {
+      return new Date(fallbackYear, value - 1, 1).getTime();
+    }
+    return value > 10000 ? value : null;
+  }
+
+  const text = String(value).trim();
+  const chineseDate = text.match(/^(\d{4})年(\d{1,2})月(?:(\d{1,2})日)?$/);
+  if (chineseDate) {
+    return new Date(Number(chineseDate[1]), Number(chineseDate[2]) - 1, Number(chineseDate[3] ?? 1)).getTime();
+  }
+
+  const month = text.match(/^(\d{1,2})月$/);
+  if (month) {
+    return new Date(fallbackYear, Number(month[1]) - 1, 1).getTime();
+  }
+
+  const parsed = Date.parse(text);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  return null;
+}
+
 const defaultFieldLabels: Record<string, string> = {
   category: '业务域',
   region: '区域',
@@ -238,6 +349,16 @@ const defaultFieldLabels: Record<string, string> = {
 
 function displayFieldName(widget: ChartWidget, field: string): string {
   return widget.config.fieldLabels?.[field] ?? defaultFieldLabels[field] ?? field;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('\n', '<br />');
 }
 
 function ChartPlaceholder({ widget }: ChartRendererProps) {

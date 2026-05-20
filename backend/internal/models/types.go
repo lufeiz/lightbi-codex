@@ -50,11 +50,12 @@ const (
 	ChartTypeColumn          ChartType = "column"
 	ChartTypeBar             ChartType = "bar"
 	ChartTypePie             ChartType = "pie"
+	ChartTypeText            ChartType = "text"
 )
 
 func ValidChartType(chartType ChartType) bool {
 	switch chartType {
-	case ChartTypeDetailTable, ChartTypePivotTable, ChartTypeComparisonTable, ChartTypeLine, ChartTypeColumn, ChartTypeBar, ChartTypePie:
+	case ChartTypeDetailTable, ChartTypePivotTable, ChartTypeComparisonTable, ChartTypeLine, ChartTypeColumn, ChartTypeBar, ChartTypePie, ChartTypeText:
 		return true
 	default:
 		return false

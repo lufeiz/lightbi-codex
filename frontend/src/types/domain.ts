@@ -18,7 +18,8 @@ export type ChartType =
   | 'line'
   | 'column'
   | 'bar'
-  | 'pie';
+  | 'pie'
+  | 'text';
 
 export type ChartStatus = 'draft' | 'published' | 'archived';
 export type DatasetType = 'standard' | 'direct';
@@ -85,6 +86,11 @@ export interface ChartConfig {
   labelField?: string;
   previewRows?: DataRow[];
   fieldLabels?: Record<string, string>;
+  textContent?: string;
+  textHtml?: string;
+  textBold?: boolean;
+  textItalic?: boolean;
+  textColor?: string;
 }
 
 export interface ChartWidget {
@@ -97,9 +103,20 @@ export interface ChartWidget {
   config: ChartConfig;
 }
 
+export interface DashboardFilters {
+  timeRange: [string, string] | null;
+  chartDimensionFilters: Record<string, DashboardDimensionFilter[]>;
+}
+
+export interface DashboardDimensionFilter {
+  field: string;
+  values: string[];
+}
+
 export interface ChartDocument {
   version: 1;
   widgets: ChartWidget[];
+  filters?: DashboardFilters;
 }
 
 export interface ChartAsset {
@@ -179,7 +196,8 @@ export const chartTypeLabels: Record<ChartType, string> = {
   line: '折线图',
   column: '柱状图',
   bar: '条形图',
-  pie: '饼图'
+  pie: '饼图',
+  text: '文本框'
 };
 
 export const chartStatusLabels: Record<ChartStatus, string> = {

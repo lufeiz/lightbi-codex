@@ -14,7 +14,8 @@ export const chartStatusOptions = Object.entries(chartStatusLabels).map(([value,
 export const chartTypeGroups: Array<{ key: string; title: string; types: ChartType[] }> = [
   { key: 'table', title: '图表', types: ['detailTable', 'pivotTable', 'comparisonTable'] },
   { key: 'bar', title: '柱条图', types: ['bar', 'column'] },
-  { key: 'line-area', title: '线面图', types: ['line', 'pie'] }
+  { key: 'line-area', title: '线面图', types: ['line', 'pie'] },
+  { key: 'content', title: '内容组件', types: ['text'] }
 ];
 
 export function buildGroupTree(groups: ChartGroup[]): ChartGroupTreeNode[] {

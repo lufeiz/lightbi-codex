@@ -9,10 +9,13 @@ import type { ChartWidget } from '@/types/domain';
 
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 220;
+const TEXT_MIN_WIDTH = 220;
+const TEXT_MIN_HEIGHT = 120;
 
 export function DesignerCanvas() {
   const x6Ref = useRef<HTMLDivElement | null>(null);
   const widgets = useDesignerStore((state) => state.widgets);
+  const filters = useDesignerStore((state) => state.filters);
   const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
   const selectWidget = useDesignerStore((state) => state.selectWidget);
   const updateWidget = useDesignerStore((state) => state.updateWidget);
@@ -69,8 +72,8 @@ export function DesignerCanvas() {
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       updateWidget(widget.id, {
-        width: Math.max(MIN_WIDTH, start.width + moveEvent.clientX - start.x),
-        height: Math.max(MIN_HEIGHT, start.height + moveEvent.clientY - start.y)
+        width: Math.max(widget.type === 'text' ? TEXT_MIN_WIDTH : MIN_WIDTH, start.width + moveEvent.clientX - start.x),
+        height: Math.max(widget.type === 'text' ? TEXT_MIN_HEIGHT : MIN_HEIGHT, start.height + moveEvent.clientY - start.y)
       });
     };
     const handleUp = () => {
@@ -93,7 +96,7 @@ export function DesignerCanvas() {
             style={{ left: widget.x, top: widget.y, width: widget.width, height: widget.height }}
             onPointerDown={(event) => startDrag(event, widget)}
           >
-            <ChartRenderer widget={widget} />
+            <ChartRenderer widget={widget} filters={filters} />
             <div className="resize-handle" onPointerDown={(event) => startResize(event, widget)} />
           </div>
         ))}

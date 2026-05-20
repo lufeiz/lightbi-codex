@@ -4,6 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import { ChartConfigPanel } from '@/features/charts/ChartConfigPanel';
+import { DashboardFilterBar } from '@/features/charts/DashboardFilterBar';
 import { DesignerCanvas } from '@/features/charts/DesignerCanvas';
 import { chartTypeGroups } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
@@ -197,6 +198,7 @@ export function ChartEditorPage() {
           />
         </div>
       </header>
+      <DashboardFilterBar />
 
       <div className="editor-layout">
         <aside className="chart-type-sidebar" aria-label="新增图表类型">
@@ -296,6 +298,20 @@ function ChartTypeIcon({ type }: { type: ChartType }) {
           <rect x="7" y="8" width="6" height="12" rx="2" fill="#ff7a45" />
           <rect x="15" y="11" width="6" height="9" rx="2" fill="#1677ff" />
           <path d="M7 21h14" stroke="#8c8c8c" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (type === 'text') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#f0fdfa" />
+          <rect x="8" y="7" width="12" height="3" rx="1.5" fill="#14b8a6" />
+          <path d="M14 10v11" stroke="#1677ff" strokeWidth="2.4" strokeLinecap="round" />
+          <path d="M9 21h10" stroke="#9254de" strokeWidth="2.4" strokeLinecap="round" />
+          <circle cx="21" cy="8" r="2.4" fill="#ff7a45" />
         </svg>
       </span>
     );
