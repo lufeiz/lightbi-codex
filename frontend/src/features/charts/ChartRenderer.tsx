@@ -48,28 +48,39 @@ function G2Renderer({ widget }: ChartRendererProps) {
     });
     const runtime = chart as unknown as G2Runtime;
     const rows = normalizedRows(widget);
-    const xField = displayFieldName(widget, widget.config.dimensions[0] ?? 'category');
-    const colorField = displayFieldName(widget, widget.config.dimensions[1] ?? widget.config.dimensions[0] ?? 'category');
+    const primaryDimension = widget.config.dimensions[0] ?? 'category';
+    const seriesDimension = widget.config.dimensions[1];
+    const xField = displayFieldName(widget, primaryDimension);
+    const colorField = seriesDimension ? displayFieldName(widget, seriesDimension) : undefined;
     const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
     const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
+    const intervalRows = collapseIntervalRows(rows, xField, yField, colorField);
 
     let mark: G2Mark | null = null;
     if (widget.type === 'line') {
       mark = runtime.line() as unknown as G2Mark;
-      mark.data(rows).encode('x', xField).encode('y', yField).encode('color', colorField);
+      mark.data(rows).encode('x', xField).encode('y', yField);
+      if (colorField) {
+        mark.encode('color', colorField);
+      }
     }
     if (widget.type === 'column') {
       mark = runtime.interval() as unknown as G2Mark;
-      mark.data(rows).encode('x', xField).encode('y', yField).encode('color', colorField);
+      mark.data(intervalRows).encode('x', xField).encode('y', yField);
+      if (colorField) {
+        mark.encode('color', colorField);
+      }
     }
     if (widget.type === 'bar') {
       mark = runtime.interval() as unknown as G2Mark;
       mark
-        .data(rows)
+        .data(intervalRows)
         .coordinate({ transform: [{ type: 'transpose' }] })
         .encode('x', xField)
-        .encode('y', yField)
-        .encode('color', colorField);
+        .encode('y', yField);
+      if (colorField) {
+        mark.encode('color', colorField);
+      }
     }
     if (widget.type === 'pie') {
       mark = runtime.interval() as unknown as G2Mark;
@@ -78,7 +89,7 @@ function G2Renderer({ widget }: ChartRendererProps) {
         .coordinate({ type: 'theta', outerRadius: 0.82 })
         .transform({ type: 'stackY' })
         .encode('y', yField)
-        .encode('color', colorField);
+        .encode('color', colorField ?? xField);
     }
 
     if (mark) {
@@ -94,6 +105,7 @@ function G2Renderer({ widget }: ChartRendererProps) {
     };
   }, [
     widget.config.dimensions,
+    widget.config.fieldLabels,
     widget.config.labelField,
     widget.config.measures,
     widget.config.previewRows,
@@ -162,7 +174,17 @@ function S2Renderer({ widget }: ChartRendererProps) {
     return () => {
       sheet.destroy();
     };
-  }, [widget.config.dimensions, widget.config.measures, widget.config.previewRows, widget.config.showScrollbar, widget.config.showTooltip, widget.height, widget.type, widget.width]);
+  }, [
+    widget.config.dimensions,
+    widget.config.fieldLabels,
+    widget.config.measures,
+    widget.config.previewRows,
+    widget.config.showScrollbar,
+    widget.config.showTooltip,
+    widget.height,
+    widget.type,
+    widget.width
+  ]);
 
   return (
     <div className="chart-renderer">
@@ -180,6 +202,27 @@ function normalizedRows(widget: ChartWidget): DataRow[] {
     });
     return next;
   });
+}
+
+function collapseIntervalRows(rows: DataRow[], xField: string, yField: string, colorField?: string): DataRow[] {
+  const groupKeys = [xField, colorField].filter(Boolean) as string[];
+  const grouped = new Map<string, DataRow>();
+
+  rows.forEach((row) => {
+    const key = groupKeys.map((field) => String(row[field] ?? '')).join('__');
+    const current = grouped.get(key);
+    const yValue = row[yField];
+    if (!current) {
+      grouped.set(key, { ...row });
+      return;
+    }
+    const currentValue = current[yField];
+    if (typeof currentValue === 'number' && typeof yValue === 'number') {
+      current[yField] = currentValue + yValue;
+    }
+  });
+
+  return [...grouped.values()];
 }
 
 const defaultFieldLabels: Record<string, string> = {

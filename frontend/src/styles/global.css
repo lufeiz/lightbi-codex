@@ -169,8 +169,10 @@ a {
 
 .user-menu-trigger {
   align-items: center;
+  justify-content: center;
+  width: 44px;
   height: 44px;
-  padding: 6px 8px;
+  padding: 0;
   border-radius: 8px;
   cursor: pointer;
   line-height: normal;
@@ -307,17 +309,20 @@ a {
 }
 
 .editor-page {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-height: calc(100vh - 104px);
+  gap: 12px;
+  height: calc(100vh - 104px);
+  min-height: 0;
 }
 
 .editor-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 18px 20px;
+  flex: 0 0 auto;
+  padding: 10px 14px;
   background: #fff;
   border: 1px solid #dde4ef;
   border-radius: 8px;
@@ -330,8 +335,7 @@ a {
 .dashboard-title-editor {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 520px;
+  min-width: 0;
 }
 
 .dashboard-name-input {
@@ -355,13 +359,15 @@ a {
 
 .editor-layout {
   display: grid;
-  grid-template-columns: minmax(520px, 1fr) minmax(620px, 660px);
+  grid-template-columns: 184px minmax(0, 1fr) minmax(540px, 580px);
   gap: 16px;
-  min-height: 720px;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .palette-panel,
 .inspector-panel {
+  min-height: 0;
   padding: 16px;
   overflow: auto;
   background: #fff;
@@ -372,29 +378,65 @@ a {
 .palette-button {
   justify-content: flex-start;
   width: 100%;
-  height: 40px;
+  height: 38px;
+  padding-inline: 10px;
 }
 
 .chart-type-group h5 {
   margin: 0 0 10px;
 }
 
+.chart-type-sidebar {
+  position: sticky;
+  top: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 12px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #dde4ef;
+  border-radius: 8px;
+}
+
+.chart-type-sidebar-title {
+  display: block;
+  margin-bottom: 12px;
+  color: #172033;
+  font-weight: 700;
+}
+
+.chart-type-sidebar-body {
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.chart-type-icon {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+}
+
+.chart-type-icon-svg {
+  width: 24px;
+  height: 24px;
+  display: block;
+}
+
 .editor-canvas-shell {
   position: relative;
   min-width: 0;
-}
-
-.chart-drawer-trigger {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  z-index: 5;
-  box-shadow: 0 8px 20px rgba(31, 45, 68, 0.12);
+  min-height: 0;
 }
 
 .designer-canvas {
   position: relative;
-  min-height: 720px;
+  height: 100%;
+  min-height: 0;
   overflow: auto;
   background: #f7f9fc;
   border: 1px solid #cfd8e6;
@@ -405,8 +447,8 @@ a {
 .widget-layer {
   position: absolute;
   inset: 0;
-  min-width: 1240px;
-  min-height: 820px;
+  min-width: 100%;
+  min-height: 100%;
 }
 
 .widget-layer {
@@ -571,9 +613,19 @@ a {
 
 .config-panel-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(max(8vh, 210px), 240px);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(max(8vh, 190px), 220px);
+  gap: 14px;
   align-items: start;
+}
+
+.config-form-module {
+  min-width: 0;
+}
+
+.config-module-divider {
+  width: 1px;
+  min-height: 100%;
+  background: linear-gradient(180deg, transparent, #d8e1ee 12%, #d8e1ee 88%, transparent);
 }
 
 .render-config-form {
@@ -616,13 +668,13 @@ a {
   margin-bottom: 10px;
 }
 
-.data-source-rail {
+.data-source-module {
   position: sticky;
   top: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: max(8vh, 210px);
+  min-width: max(8vh, 190px);
   padding: 14px;
   background: #f3f6fa;
   border: 1px solid #d8e1ee;
@@ -633,8 +685,13 @@ a {
   font-size: 12px;
 }
 
-.data-source-rail .ant-select {
+.data-source-module .ant-select {
   width: 100%;
+}
+
+.data-source-help {
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .field-pool {

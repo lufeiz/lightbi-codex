@@ -46,7 +46,8 @@ module.exports = {
   },
   plugins: [
     new HtmlWebpackPlugin({
-      template: path.resolve(__dirname, 'index.html')
+      template: path.resolve(__dirname, 'index.html'),
+      favicon: path.resolve(__dirname, 'src/assets/lightbi-favicon.png')
     }),
     new ForkTsCheckerWebpackPlugin(),
     new webpack.DefinePlugin({

@@ -85,7 +85,7 @@ export function DesignerCanvas() {
     <section className="designer-canvas" onPointerDown={() => selectWidget(null)}>
       <div ref={x6Ref} className="x6-grid-layer" />
       <div className="widget-layer">
-        {widgets.length === 0 && <Empty description="点击左上角添加图表，开始搭建仪表盘" />}
+        {widgets.length === 0 && <Empty description="暂无图表" />}
         {widgets.map((widget) => (
           <div
             key={widget.id}

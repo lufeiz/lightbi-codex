@@ -47,10 +47,6 @@ export function AppShell() {
           <div className="user-menu">
             <Space className="user-menu-trigger" role="button" tabIndex={0} aria-haspopup="menu" aria-label="用户菜单">
               <Avatar>{user?.displayName?.slice(0, 1) ?? 'U'}</Avatar>
-              <span className="current-user">
-                {user?.displayName ?? user?.username}
-                <em>{user?.role}</em>
-              </span>
             </Space>
             <div className="user-menu-dropdown" role="menu">
               <button className="user-menu-item" type="button" role="menuitem" onClick={() => void handleLogout()}>
