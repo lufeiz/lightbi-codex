@@ -99,7 +99,7 @@ export function ChartsPage() {
 
   const fetchDictionaries = useCallback(async () => {
     try {
-      const [groupData, tagData, userData] = await Promise.all([api.groups(), api.tags(), api.users()]);
+      const [groupData, tagData, userData] = await Promise.all([api.groups(), api.tags(), api.chartCreators()]);
       setGroups(groupData);
       setTags(tagData);
       setUsers(userData);

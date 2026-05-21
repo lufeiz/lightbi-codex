@@ -21,7 +21,9 @@ func Migrate(db *gorm.DB) error {
 	return db.AutoMigrate(
 		&models.User{},
 		&models.RefreshToken{},
+		&models.DataSource{},
 		&models.Dataset{},
+		&models.DatasetQueryCache{},
 		&models.ChartGroup{},
 		&models.ChartTag{},
 		&models.Chart{},
@@ -93,12 +95,8 @@ func seedDatasets(db *gorm.DB) error {
 	if err := db.Model(&models.Dataset{}).Count(&count).Error; err != nil {
 		return err
 	}
-	if count >= 40 {
-		return refreshDatasets(db)
-	}
-
-	if err := db.Where("1 = 1").Delete(&models.Dataset{}).Error; err != nil {
-		return err
+	if count > 0 {
+		return nil
 	}
 
 	standardProfiles := standardDatasetProfiles()

@@ -1326,3 +1326,46 @@ a {
   margin-top: 10px;
   text-align: center;
 }
+
+.header-nav-link {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  height: 34px;
+  padding: 0 10px;
+  color: #4b5870;
+  font-size: 14px;
+  border-radius: 6px;
+}
+
+.header-nav-link:hover {
+  color: #1677ff;
+  background: #f3f7ff;
+}
+
+.asset-page {
+  padding: 24px;
+}
+
+.asset-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.asset-page-header .ant-typography {
+  margin-bottom: 4px;
+}
+
+.asset-form .compact-form-item {
+  width: 100%;
+}
+
+.full-width-control {
+  width: 100%;
+}
+
+.dataset-preview-table {
+  margin-top: 14px;
+}

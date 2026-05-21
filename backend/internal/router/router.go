@@ -32,7 +32,8 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	chartHandler := handlers.ChartHandler{DB: db}
 	groupHandler := handlers.GroupHandler{DB: db}
 	tagHandler := handlers.TagHandler{DB: db}
-	datasetHandler := handlers.DatasetHandler{DB: db}
+	dataSourceHandler := handlers.DataSourceHandler{DB: db, Config: cfg}
+	datasetHandler := handlers.DatasetHandler{DB: db, Config: cfg}
 
 	api := engine.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
@@ -51,12 +52,13 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	writeRoles := middleware.RequireRoles(models.RoleAdmin, models.RoleEditor)
 	adminOnly := middleware.RequireRoles(models.RoleAdmin)
 
-	protected.GET("/users", readRoles, userHandler.List)
+	protected.GET("/users", adminOnly, userHandler.List)
 	protected.POST("/users", adminOnly, userHandler.Create)
 	protected.PUT("/users/:id", adminOnly, userHandler.Update)
 	protected.DELETE("/users/:id", adminOnly, userHandler.Delete)
 
 	protected.GET("/charts", readRoles, chartHandler.List)
+	protected.GET("/charts/creators", readRoles, chartHandler.Creators)
 	protected.POST("/charts", writeRoles, chartHandler.Create)
 	protected.GET("/charts/:id", readRoles, chartHandler.Get)
 	protected.PUT("/charts/:id", writeRoles, chartHandler.Update)
@@ -75,10 +77,22 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	protected.PUT("/chart-tags/:id", writeRoles, tagHandler.Update)
 	protected.DELETE("/chart-tags/:id", writeRoles, tagHandler.Delete)
 
+	protected.GET("/data-sources", readRoles, dataSourceHandler.List)
+	protected.POST("/data-sources", writeRoles, dataSourceHandler.Create)
+	protected.PUT("/data-sources/:id", writeRoles, dataSourceHandler.Update)
+	protected.DELETE("/data-sources/:id", writeRoles, dataSourceHandler.Delete)
+	protected.POST("/data-sources/:id/test", writeRoles, dataSourceHandler.Test)
+
 	protected.GET("/datasets", readRoles, datasetHandler.List)
+	protected.POST("/datasets", writeRoles, datasetHandler.Create)
 	protected.GET("/datasets/:id", readRoles, datasetHandler.Get)
+	protected.PUT("/datasets/:id", writeRoles, datasetHandler.Update)
+	protected.DELETE("/datasets/:id", writeRoles, datasetHandler.Delete)
 	protected.GET("/datasets/:id/fields", readRoles, datasetHandler.Fields)
 	protected.GET("/datasets/:id/rows", readRoles, datasetHandler.Rows)
+	protected.POST("/datasets/:id/preview", readRoles, datasetHandler.Preview)
+	protected.POST("/datasets/:id/query", readRoles, datasetHandler.Query)
+	protected.POST("/datasets/:id/refresh", writeRoles, datasetHandler.Refresh)
 
 	return engine
 }

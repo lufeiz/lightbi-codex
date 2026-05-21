@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import { api, getApiAccessToken, setApiAccessToken } from '@/api/client';
+import { api, getApiAccessToken, refreshAccessToken, setApiAccessToken } from '@/api/client';
 import type { LoginPayload, RegisterPayload, UserDTO } from '@/types/domain';
 
 interface AuthState {
@@ -36,8 +36,9 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
   async bootstrap() {
-    if (!getApiAccessToken()) {
-      set({ bootstrapped: true });
+    const hasToken = getApiAccessToken() || (await refreshAccessToken());
+    if (!hasToken) {
+      set({ accessToken: null, user: null, bootstrapped: true });
       return;
     }
     try {

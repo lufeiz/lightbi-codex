@@ -1,11 +1,13 @@
 import { Chart as G2Chart } from '@antv/g2';
 import { PivotSheet, TableSheet } from '@antv/s2';
+import DOMPurify from 'dompurify';
 import { useEffect, useMemo, useRef } from 'react';
 
 import type { ChartWidget, DashboardFilters, DataRow } from '@/types/domain';
 
 interface ChartRendererProps {
   widget: ChartWidget;
+  rows?: DataRow[];
   filters?: DashboardFilters;
 }
 
@@ -30,8 +32,8 @@ interface G2Mark {
   tooltip: (options: boolean | Record<string, unknown>) => G2Mark;
 }
 
-export function ChartRenderer({ widget, filters }: ChartRendererProps) {
-  const filteredRows = useMemo(() => applyDashboardFilters(widget, filters), [filters, widget]);
+export function ChartRenderer({ widget, rows, filters }: ChartRendererProps) {
+  const filteredRows = useMemo(() => applyDashboardFilters(widget, rows, filters), [filters, rows, widget]);
 
   if (isTextWidget(widget)) {
     return <TextRenderer widget={widget} />;
@@ -222,7 +224,7 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
 }
 
 function TextRenderer({ widget }: Pick<ChartRendererProps, 'widget'>) {
-  const contentHtml = widget.config.textHtml || escapeHtml(widget.config.textContent?.trim() || '输入文本内容');
+  const contentHtml = DOMPurify.sanitize(widget.config.textHtml || escapeHtml(widget.config.textContent?.trim() || '输入文本内容'));
 
   return (
     <div className="chart-renderer text-widget-renderer">
@@ -348,8 +350,8 @@ function collapseIntervalRows(rows: DataRow[], xField: string, yField: string, c
   return [...grouped.values()];
 }
 
-function applyDashboardFilters(widget: ChartWidget, filters?: DashboardFilters): DataRow[] {
-  const rows = widget.config.previewRows ?? [];
+function applyDashboardFilters(widget: ChartWidget, runtimeRows?: DataRow[], filters?: DashboardFilters): DataRow[] {
+  const rows = runtimeRows?.length ? runtimeRows : (widget.config.previewRows ?? []);
   if (!filters || isTextWidget(widget)) {
     return rows;
   }

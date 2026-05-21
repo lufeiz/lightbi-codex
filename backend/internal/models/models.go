@@ -22,17 +22,62 @@ type User struct {
 }
 
 type Dataset struct {
-	ID          uint           `gorm:"primaryKey" json:"id"`
-	Name        string         `gorm:"size:160;not null;index" json:"name"`
-	Type        DatasetType    `gorm:"size:32;not null;index" json:"type"`
-	Description string         `gorm:"size:500" json:"description"`
-	SourceName  string         `gorm:"size:120;not null" json:"sourceName"`
-	Dimensions  datatypes.JSON `gorm:"type:json;not null" json:"dimensions"`
-	Measures    datatypes.JSON `gorm:"type:json;not null" json:"measures"`
-	Rows        datatypes.JSON `gorm:"type:json;not null" json:"rows"`
-	CreatedAt   time.Time      `json:"createdAt"`
-	UpdatedAt   time.Time      `json:"updatedAt"`
-	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
+	ID            uint           `gorm:"primaryKey" json:"id"`
+	Name          string         `gorm:"size:160;not null;index" json:"name"`
+	Type          DatasetType    `gorm:"size:32;not null;index" json:"type"`
+	Description   string         `gorm:"size:500" json:"description"`
+	SourceName    string         `gorm:"size:120;not null" json:"sourceName"`
+	DataSourceID  *uint          `gorm:"index" json:"dataSourceId"`
+	DataSource    *DataSource    `gorm:"constraint:OnUpdate:CASCADE,OnDelete:SET NULL" json:"dataSource,omitempty"`
+	QuerySQL      string         `gorm:"type:text" json:"querySql"`
+	Fields        datatypes.JSON `gorm:"type:json" json:"fields"`
+	CacheTTL      int            `gorm:"not null;default:300" json:"cacheTtl"`
+	RefreshEvery  int            `gorm:"not null;default:0" json:"refreshEvery"`
+	QueryTimeout  int            `gorm:"not null;default:10" json:"queryTimeout"`
+	RowLimit      int            `gorm:"not null;default:500" json:"rowLimit"`
+	Policy        datatypes.JSON `gorm:"type:json" json:"policy"`
+	LastRefreshAt *time.Time     `json:"lastRefreshAt,omitempty"`
+	Dimensions    datatypes.JSON `gorm:"type:json;not null" json:"dimensions"`
+	Measures      datatypes.JSON `gorm:"type:json;not null" json:"measures"`
+	Rows          datatypes.JSON `gorm:"type:json;not null" json:"rows"`
+	CreatedBy     uint           `gorm:"not null;default:0;index" json:"createdBy"`
+	UpdatedBy     uint           `gorm:"not null;default:0;index" json:"updatedBy"`
+	CreatedAt     time.Time      `json:"createdAt"`
+	UpdatedAt     time.Time      `json:"updatedAt"`
+	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+}
+
+type DataSource struct {
+	ID                  uint             `gorm:"primaryKey" json:"id"`
+	Name                string           `gorm:"size:160;not null;index" json:"name"`
+	Type                DataSourceType   `gorm:"size:32;not null;index" json:"type"`
+	Status              DataSourceStatus `gorm:"size:24;not null;index" json:"status"`
+	Description         string           `gorm:"size:500" json:"description"`
+	Host                string           `gorm:"size:255;not null" json:"host"`
+	Port                int              `gorm:"not null" json:"port"`
+	DatabaseName        string           `gorm:"size:160;not null" json:"databaseName"`
+	Username            string           `gorm:"size:160;not null" json:"username"`
+	PasswordCiphertext  string           `gorm:"type:text" json:"-"`
+	SSLMode             string           `gorm:"size:40" json:"sslMode"`
+	Params              datatypes.JSON   `gorm:"type:json" json:"params"`
+	MaxOpenConns        int              `gorm:"not null;default:5" json:"maxOpenConns"`
+	MaxIdleConns        int              `gorm:"not null;default:2" json:"maxIdleConns"`
+	ConnMaxLifetimeSecs int              `gorm:"not null;default:300" json:"connMaxLifetimeSecs"`
+	CreatedBy           uint             `gorm:"not null;index" json:"createdBy"`
+	UpdatedBy           uint             `gorm:"not null;index" json:"updatedBy"`
+	CreatedAt           time.Time        `json:"createdAt"`
+	UpdatedAt           time.Time        `json:"updatedAt"`
+	DeletedAt           gorm.DeletedAt   `gorm:"index" json:"-"`
+}
+
+type DatasetQueryCache struct {
+	ID        uint           `gorm:"primaryKey" json:"id"`
+	DatasetID uint           `gorm:"not null;index;uniqueIndex:idx_dataset_query_cache" json:"datasetId"`
+	CacheKey  string         `gorm:"size:80;not null;uniqueIndex:idx_dataset_query_cache" json:"cacheKey"`
+	Result    datatypes.JSON `gorm:"type:json;not null" json:"result"`
+	ExpiresAt time.Time      `gorm:"not null;index" json:"expiresAt"`
+	CreatedAt time.Time      `json:"createdAt"`
+	UpdatedAt time.Time      `json:"updatedAt"`
 }
 
 type RefreshToken struct {

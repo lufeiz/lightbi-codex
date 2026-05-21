@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 
 	"lightbi/backend/internal/middleware"
@@ -99,6 +98,21 @@ func (h ChartHandler) List(c *gin.Context) {
 	}
 
 	OK(c, chartListResponse{Items: charts, Total: total, Page: page, PageSize: pageSize})
+}
+
+func (h ChartHandler) Creators(c *gin.Context) {
+	var users []models.User
+	err := h.DB.
+		Joins("JOIN charts ON charts.created_by = users.id AND charts.deleted_at IS NULL").
+		Where("users.status = ?", models.UserStatusActive).
+		Group("users.id").
+		Order("users.display_name ASC").
+		Find(&users).Error
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "list chart creators failed")
+		return
+	}
+	OK(c, ToUserDTOs(users))
 }
 
 func (h ChartHandler) Create(c *gin.Context) {
@@ -337,16 +351,6 @@ func (h ChartHandler) groupWithDescendants(groupID uint) []uint {
 		}
 	}
 	return ids
-}
-
-func normalizeConfig(raw json.RawMessage) (datatypes.JSON, bool) {
-	if len(raw) == 0 {
-		return datatypes.JSON([]byte("{}")), true
-	}
-	if !json.Valid(raw) {
-		return nil, false
-	}
-	return datatypes.JSON(raw), true
 }
 
 func normalizeSortBy(sortBy string) string {
