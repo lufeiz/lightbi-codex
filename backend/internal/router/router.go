@@ -30,6 +30,9 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	authHandler := handlers.AuthHandler{DB: db, Config: cfg, JWT: jwtService}
 	userHandler := handlers.UserHandler{DB: db}
 	chartHandler := handlers.ChartHandler{DB: db}
+	dashboardHandler := handlers.DashboardHandler{DB: db, Config: cfg}
+	workspaceHandler := handlers.WorkspaceHandler{DB: db}
+	projectHandler := handlers.ProjectHandler{DB: db}
 	groupHandler := handlers.GroupHandler{DB: db}
 	tagHandler := handlers.TagHandler{DB: db}
 	dataSourceHandler := handlers.DataSourceHandler{DB: db, Config: cfg}
@@ -42,6 +45,8 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	api.POST("/auth/login", authHandler.Login)
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/refresh", authHandler.Refresh)
+	api.GET("/public/shares/:token", dashboardHandler.PublicShare)
+	api.GET("/public/embeds/:token", dashboardHandler.PublicEmbed)
 
 	protected := api.Group("/")
 	protected.Use(middleware.AuthRequired(db, jwtService))
@@ -57,6 +62,20 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	protected.PUT("/users/:id", adminOnly, userHandler.Update)
 	protected.DELETE("/users/:id", adminOnly, userHandler.Delete)
 
+	protected.GET("/workspaces", readRoles, workspaceHandler.List)
+	protected.POST("/workspaces", writeRoles, workspaceHandler.Create)
+	protected.PUT("/workspaces/:id", writeRoles, workspaceHandler.Update)
+	protected.GET("/workspaces/:id/members", readRoles, workspaceHandler.Members)
+	protected.POST("/workspaces/:id/members", writeRoles, workspaceHandler.UpsertMember)
+
+	protected.GET("/projects", readRoles, projectHandler.List)
+	protected.POST("/projects", writeRoles, projectHandler.Create)
+	protected.PUT("/projects/:id", writeRoles, projectHandler.Update)
+	protected.GET("/projects/:id/members", readRoles, projectHandler.Members)
+	protected.POST("/projects/:id/members", writeRoles, projectHandler.UpsertMember)
+
+	protected.GET("/dashboards/:id/published", readRoles, dashboardHandler.Published)
+
 	protected.GET("/charts", readRoles, chartHandler.List)
 	protected.GET("/charts/creators", readRoles, chartHandler.Creators)
 	protected.POST("/charts", writeRoles, chartHandler.Create)
@@ -66,6 +85,20 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	protected.POST("/charts/:id/copy", writeRoles, chartHandler.Copy)
 	protected.POST("/charts/:id/publish", writeRoles, chartHandler.Publish)
 	protected.POST("/charts/:id/archive", writeRoles, chartHandler.Archive)
+	protected.GET("/charts/:id/versions", readRoles, dashboardHandler.Versions)
+	protected.GET("/charts/:id/versions/:versionId", readRoles, dashboardHandler.Version)
+	protected.POST("/charts/:id/rollback", writeRoles, dashboardHandler.Rollback)
+	protected.GET("/charts/:id/audit-logs", readRoles, dashboardHandler.AuditLogs)
+	protected.GET("/charts/:id/share-links", readRoles, dashboardHandler.ListShareLinks)
+	protected.POST("/charts/:id/share-links", writeRoles, dashboardHandler.CreateShareLink)
+	protected.PUT("/charts/:id/share-links/:linkId", writeRoles, dashboardHandler.UpdateShareLink)
+	protected.DELETE("/charts/:id/share-links/:linkId", writeRoles, dashboardHandler.DeleteShareLink)
+	protected.POST("/charts/:id/export", readRoles, dashboardHandler.Export)
+	protected.GET("/charts/:id/subscriptions", readRoles, dashboardHandler.ListSubscriptions)
+	protected.POST("/charts/:id/subscriptions", writeRoles, dashboardHandler.CreateSubscription)
+	protected.PUT("/charts/:id/subscriptions/:subscriptionId", writeRoles, dashboardHandler.UpdateSubscription)
+	protected.DELETE("/charts/:id/subscriptions/:subscriptionId", writeRoles, dashboardHandler.DeleteSubscription)
+	protected.POST("/subscriptions/:id/run", writeRoles, dashboardHandler.RunSubscription)
 
 	protected.GET("/chart-groups", readRoles, groupHandler.List)
 	protected.POST("/chart-groups", writeRoles, groupHandler.Create)

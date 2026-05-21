@@ -16,6 +16,7 @@ import { api } from '@/api/client';
 import dimensionFieldIcon from '@/assets/dimension-field-icon.svg';
 import measureFieldIcon from '@/assets/measure-field-icon.svg';
 import { useDesignerStore } from '@/store/designerStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import type { ChartConfig, ChartWidget, DatasetField, DatasetQueryConfig, DatasetSummary, DatasetType } from '@/types/domain';
 import { chartTypeLabels, datasetTypeLabels } from '@/types/domain';
 
@@ -83,6 +84,8 @@ function SelectedChartConfigPanel({
   const [updatingPreview, setUpdatingPreview] = useState(false);
   const runtimeRows = useDesignerStore((state) => state.runtimeRows[selectedWidget.id] ?? []);
   const setWidgetRows = useDesignerStore((state) => state.setWidgetRows);
+  const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const projectId = useWorkspaceStore((state) => state.projectId);
   const isTextWidget = selectedWidget.type === 'text' || selectedWidget.type === 'richText';
 
   useEffect(() => {
@@ -106,7 +109,7 @@ function SelectedChartConfigPanel({
     setDatasetFields(null);
     setDatasetError(null);
     void api
-      .datasets(datasetType)
+      .datasets(datasetType, { workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined })
       .then((items) => {
         if (active) {
           setDatasets(items);
@@ -121,7 +124,7 @@ function SelectedChartConfigPanel({
     return () => {
       active = false;
     };
-  }, [isTextWidget, selectedWidget?.config.datasetType]);
+  }, [isTextWidget, projectId, selectedWidget?.config.datasetType, workspaceId]);
 
   useEffect(() => {
     const widgetId = selectedWidget?.id;

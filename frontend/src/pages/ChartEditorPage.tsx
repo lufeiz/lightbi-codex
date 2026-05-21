@@ -4,12 +4,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import { ChartConfigPanel } from '@/features/charts/ChartConfigPanel';
+import { DashboardGovernancePanel } from '@/features/charts/DashboardGovernancePanel';
 import { DashboardFilterBar } from '@/features/charts/DashboardFilterBar';
 import { DesignerCanvas } from '@/features/charts/DesignerCanvas';
 import { chartTypeGroups } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
 import { useDesignerStore } from '@/store/designerStore';
 import { useEditorToolbarStore } from '@/store/editorToolbarStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import type { ChartStatus, ChartType } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
@@ -23,7 +25,10 @@ export function ChartEditorPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [dataSourceCollapsed, setDataSourceCollapsed] = useState(false);
+  const [governanceOpen, setGovernanceOpen] = useState(false);
   const user = useAuthStore((state) => state.user);
+  const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const projectId = useWorkspaceStore((state) => state.projectId);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
   const meta = useDesignerStore((state) => state.meta);
   const widgets = useDesignerStore((state) => state.widgets);
@@ -88,7 +93,15 @@ export function ChartEditorPage() {
       message.warning('请至少添加一个图表');
       return null;
     }
+    if (!chartId && (!workspaceId || !projectId)) {
+      message.warning('请先选择工作空间和项目');
+      return null;
+    }
     const payload = toPayload();
+    if (!chartId) {
+      payload.workspaceId = workspaceId ?? undefined;
+      payload.projectId = projectId ?? undefined;
+    }
     if (statusOverride) {
       payload.status = statusOverride;
     }
@@ -100,7 +113,7 @@ export function ChartEditorPage() {
       navigate(`/charts/${saved.id}/edit`, { replace: true });
     }
     return saved;
-  }, [canWrite, chartId, meta.name, navigate, setMeta, toPayload, widgets.length]);
+  }, [canWrite, chartId, meta.name, navigate, projectId, setMeta, toPayload, widgets.length, workspaceId]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -199,6 +212,11 @@ export function ChartEditorPage() {
             onBlur={handleDashboardNameBlur}
           />
         </div>
+        {chartId && (
+          <Button onClick={() => setGovernanceOpen(true)}>
+            发布治理
+          </Button>
+        )}
       </header>
       <DashboardFilterBar />
 
@@ -246,6 +264,7 @@ export function ChartEditorPage() {
           />
         </aside>
       </div>
+      <DashboardGovernancePanel chartId={chartId} open={governanceOpen} onOpenChange={setGovernanceOpen} onRollback={bootstrap} />
     </div>
   );
 }

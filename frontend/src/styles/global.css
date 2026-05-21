@@ -153,9 +153,19 @@ a {
 
 .app-header-actions {
   display: flex;
+  align-items: center;
+  gap: 12px;
   flex: 1 1 auto;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.workspace-switcher {
+  min-width: 320px;
+}
+
+.workspace-switcher .ant-select {
+  min-width: 150px;
 }
 
 .global-editor-actions {
@@ -1368,4 +1378,61 @@ a {
 
 .dataset-preview-table {
   margin-top: 14px;
+}
+
+.published-page {
+  padding: 24px;
+  overflow: auto;
+}
+
+.published-page-actions {
+  margin-bottom: 16px;
+}
+
+.published-dashboard {
+  min-height: 100vh;
+  padding: 24px;
+  background: #f6f8fb;
+}
+
+.published-dashboard.embed {
+  padding: 0;
+  background: #fff;
+}
+
+.published-dashboard-header {
+  margin-bottom: 20px;
+}
+
+.published-dashboard-canvas {
+  position: relative;
+  background: #fff;
+  border: 1px solid #e2e8f2;
+  border-radius: 8px;
+  overflow: auto;
+}
+
+.published-widget {
+  position: absolute;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 8px;
+}
+
+.governance-page .ant-tabs {
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e2e8f2;
+  border-radius: 8px;
+}
+
+.governance-members {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.governance-tab {
+  width: 100%;
 }

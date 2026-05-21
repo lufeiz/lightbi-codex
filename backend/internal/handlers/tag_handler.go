@@ -15,13 +15,16 @@ type TagHandler struct {
 }
 
 type tagRequest struct {
-	Name  string `json:"name"`
-	Color string `json:"color"`
+	WorkspaceID *uint  `json:"workspaceId"`
+	ProjectID   *uint  `json:"projectId"`
+	Name        string `json:"name"`
+	Color       string `json:"color"`
 }
 
 func (h TagHandler) List(c *gin.Context) {
 	var tags []models.ChartTag
-	if err := h.DB.Order("name ASC").Find(&tags).Error; err != nil {
+	query := addProjectFilter(c, h.DB, h.DB.Model(&models.ChartTag{}), "project_id")
+	if err := query.Order("name ASC").Find(&tags).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "list tags failed")
 		return
 	}
@@ -38,12 +41,24 @@ func (h TagHandler) Create(c *gin.Context) {
 	if req.Color == "" {
 		req.Color = "#1677ff"
 	}
+	workspaceID, projectID := requestScopeFromRaw(req.WorkspaceID, req.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
 
 	tag := models.ChartTag{
-		Name:      req.Name,
-		Color:     req.Color,
-		CreatedBy: user.ID,
-		UpdatedBy: user.ID,
+		WorkspaceID: scope.WorkspaceID,
+		ProjectID:   scope.ProjectID,
+		OwnerID:     user.ID,
+		Name:        req.Name,
+		Color:       req.Color,
+		CreatedBy:   user.ID,
+		UpdatedBy:   user.ID,
 	}
 	if err := h.DB.Create(&tag).Error; err != nil {
 		Fail(c, http.StatusBadRequest, "create tag failed")
@@ -57,6 +72,10 @@ func (h TagHandler) Update(c *gin.Context) {
 	var tag models.ChartTag
 	if err := h.DB.First(&tag, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "tag not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, tag.ProjectID) {
+		Fail(c, http.StatusForbidden, "tag permission denied")
 		return
 	}
 
@@ -81,9 +100,14 @@ func (h TagHandler) Update(c *gin.Context) {
 }
 
 func (h TagHandler) Delete(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
 	var tag models.ChartTag
 	if err := h.DB.First(&tag, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "tag not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, tag.ProjectID) {
+		Fail(c, http.StatusForbidden, "tag permission denied")
 		return
 	}
 

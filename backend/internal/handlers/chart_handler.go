@@ -23,6 +23,8 @@ type chartRequest struct {
 	Description string             `json:"description"`
 	Type        models.ChartType   `json:"type"`
 	Status      models.ChartStatus `json:"status"`
+	WorkspaceID *uint              `json:"workspaceId"`
+	ProjectID   *uint              `json:"projectId"`
 	GroupID     *uint              `json:"groupId"`
 	TagIDs      []uint             `json:"tagIds"`
 	Config      json.RawMessage    `json:"config"`
@@ -42,7 +44,7 @@ func (h ChartHandler) List(c *gin.Context) {
 		pageSize = 100
 	}
 
-	query := h.DB.Model(&models.Chart{})
+	query := addProjectFilter(c, h.DB, h.DB.Model(&models.Chart{}), "charts.project_id")
 	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("charts.name LIKE ? OR charts.description LIKE ?", like, like)
@@ -101,10 +103,16 @@ func (h ChartHandler) List(c *gin.Context) {
 }
 
 func (h ChartHandler) Creators(c *gin.Context) {
+	projectIDs := accessibleProjectIDs(c, h.DB, 0)
+	if len(projectIDs) == 0 {
+		OK(c, []UserDTO{})
+		return
+	}
 	var users []models.User
 	err := h.DB.
 		Joins("JOIN charts ON charts.created_by = users.id AND charts.deleted_at IS NULL").
 		Where("users.status = ?", models.UserStatusActive).
+		Where("charts.project_id IN ?", projectIDs).
 		Group("users.id").
 		Order("users.display_name ASC").
 		Find(&users).Error
@@ -130,6 +138,15 @@ func (h ChartHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "invalid chart type")
 		return
 	}
+	workspaceID, projectID := requestScopeFromRaw(req.WorkspaceID, req.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
 	if req.Status == "" {
 		req.Status = models.ChartStatusDraft
 	}
@@ -153,6 +170,9 @@ func (h ChartHandler) Create(c *gin.Context) {
 	}
 
 	chart := models.Chart{
+		WorkspaceID: scope.WorkspaceID,
+		ProjectID:   scope.ProjectID,
+		OwnerID:     user.ID,
 		Name:        req.Name,
 		Description: req.Description,
 		Type:        req.Type,
@@ -167,6 +187,7 @@ func (h ChartHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "create chart failed")
 		return
 	}
+	audit(h.DB, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.create", "chart", chart.ID, "创建仪表盘", nil)
 	h.DB.Preload("Tags").Preload("Group").Preload("Creator").First(&chart, chart.ID)
 	Created(c, chart)
 }
@@ -177,6 +198,9 @@ func (h ChartHandler) Get(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "chart not found")
 		return
 	}
+	if !requireChartRead(c, h.DB, &chart) {
+		return
+	}
 	OK(c, chart)
 }
 
@@ -185,6 +209,9 @@ func (h ChartHandler) Update(c *gin.Context) {
 	var chart models.Chart
 	if err := h.DB.Preload("Tags").First(&chart, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "chart not found")
+		return
+	}
+	if !requireChartWrite(c, h.DB, &chart) {
 		return
 	}
 
@@ -242,6 +269,7 @@ func (h ChartHandler) Update(c *gin.Context) {
 		return
 	}
 
+	audit(h.DB, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.update", "chart", chart.ID, "更新仪表盘", nil)
 	h.DB.Preload("Tags").Preload("Group").Preload("Creator").Preload("Updater").First(&chart, chart.ID)
 	OK(c, chart)
 }
@@ -252,10 +280,15 @@ func (h ChartHandler) Delete(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "chart not found")
 		return
 	}
+	user, _ := middleware.CurrentUser(c)
+	if !requireChartWrite(c, h.DB, &chart) {
+		return
+	}
 	if err := h.DB.Delete(&chart).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "delete chart failed")
 		return
 	}
+	audit(h.DB, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.delete", "chart", chart.ID, "删除仪表盘", nil)
 	OK(c, gin.H{"deleted": true})
 }
 
@@ -266,8 +299,14 @@ func (h ChartHandler) Copy(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "chart not found")
 		return
 	}
+	if !requireChartWrite(c, h.DB, &chart) {
+		return
+	}
 
 	copied := models.Chart{
+		WorkspaceID: chart.WorkspaceID,
+		ProjectID:   chart.ProjectID,
+		OwnerID:     user.ID,
 		Name:        chart.Name + " 副本",
 		Description: chart.Description,
 		Type:        chart.Type,
@@ -282,6 +321,7 @@ func (h ChartHandler) Copy(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "copy chart failed")
 		return
 	}
+	audit(h.DB, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.copy", "chart", chart.ID, "复制仪表盘", map[string]any{"copiedChartId": copied.ID})
 	h.DB.Preload("Tags").Preload("Group").Preload("Creator").First(&copied, copied.ID)
 	Created(c, copied)
 }
@@ -301,10 +341,29 @@ func (h ChartHandler) changeStatus(c *gin.Context, status models.ChartStatus) {
 		Fail(c, http.StatusNotFound, "chart not found")
 		return
 	}
-	if err := h.DB.Model(&chart).Updates(map[string]interface{}{
-		"status":     status,
-		"updated_by": user.ID,
-	}).Error; err != nil {
+	if !requireChartWrite(c, h.DB, &chart) {
+		return
+	}
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&chart).Updates(map[string]interface{}{
+			"status":     status,
+			"updated_by": user.ID,
+		}).Error; err != nil {
+			return err
+		}
+		action := "chart.archive"
+		summary := "归档仪表盘"
+		if status == models.ChartStatusPublished {
+			if _, err := snapshotChartVersion(tx, chart, user.ID); err != nil {
+				return err
+			}
+			action = "chart.publish"
+			summary = "发布仪表盘"
+		}
+		audit(tx, user.ID, chart.WorkspaceID, chart.ProjectID, action, "chart", chart.ID, summary, map[string]any{"status": status})
+		return nil
+	})
+	if err != nil {
 		Fail(c, http.StatusInternalServerError, "update chart status failed")
 		return
 	}

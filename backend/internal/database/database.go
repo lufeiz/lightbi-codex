@@ -18,8 +18,12 @@ func Connect(cfg config.Config) (*gorm.DB, error) {
 }
 
 func Migrate(db *gorm.DB) error {
-	return db.AutoMigrate(
+	if err := db.AutoMigrate(
 		&models.User{},
+		&models.Workspace{},
+		&models.WorkspaceMember{},
+		&models.Project{},
+		&models.ProjectMember{},
 		&models.RefreshToken{},
 		&models.DataSource{},
 		&models.Dataset{},
@@ -27,14 +31,144 @@ func Migrate(db *gorm.DB) error {
 		&models.ChartGroup{},
 		&models.ChartTag{},
 		&models.Chart{},
-	)
+		&models.ChartVersion{},
+		&models.AuditLog{},
+		&models.DashboardShareLink{},
+		&models.DashboardSubscription{},
+	); err != nil {
+		return err
+	}
+	return EnsureGovernanceDefaults(db)
 }
 
 func SeedDefaults(db *gorm.DB, cfg config.Config) error {
 	if err := seedUsers(db, cfg); err != nil {
 		return err
 	}
+	if err := EnsureGovernanceDefaults(db); err != nil {
+		return err
+	}
 	return seedDatasets(db)
+}
+
+func EnsureGovernanceDefaults(db *gorm.DB) error {
+	var users []models.User
+	if err := db.Find(&users).Error; err != nil {
+		return err
+	}
+
+	workspace := models.Workspace{}
+	err := db.Where("name = ?", "默认工作空间").First(&workspace).Error
+	if err == gorm.ErrRecordNotFound {
+		workspace = models.Workspace{Name: "默认工作空间", Description: "系统默认工作空间"}
+		if err := db.Create(&workspace).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	ownerID := uint(0)
+	for _, user := range users {
+		if user.Role == models.RoleAdmin {
+			ownerID = user.ID
+			break
+		}
+	}
+	if ownerID == 0 && len(users) > 0 {
+		ownerID = users[0].ID
+	}
+	if len(users) == 0 {
+		return nil
+	}
+
+	project := models.Project{}
+	err = db.Where("workspace_id = ? AND name = ?", workspace.ID, "默认项目").First(&project).Error
+	if err == gorm.ErrRecordNotFound {
+		project = models.Project{WorkspaceID: workspace.ID, Name: "默认项目", Description: "系统默认项目", OwnerID: ownerID, CreatedBy: ownerID, UpdatedBy: ownerID}
+		if err := db.Create(&project).Error; err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+
+	for _, user := range users {
+		role := governanceRoleFromSystemRole(user.Role)
+		if err := upsertWorkspaceMember(db, workspace.ID, user.ID, role); err != nil {
+			return err
+		}
+		if err := upsertProjectMember(db, project.ID, user.ID, role); err != nil {
+			return err
+		}
+	}
+
+	if project.OwnerID == 0 && ownerID != 0 {
+		if err := db.Model(&project).Updates(map[string]any{"owner_id": ownerID, "created_by": ownerID, "updated_by": ownerID}).Error; err != nil {
+			return err
+		}
+	}
+	if workspace.CreatedBy == 0 && ownerID != 0 {
+		if err := db.Model(&workspace).Updates(map[string]any{"created_by": ownerID, "updated_by": ownerID}).Error; err != nil {
+			return err
+		}
+	}
+
+	updates := map[string]any{"workspace_id": workspace.ID, "project_id": project.ID}
+	if ownerID != 0 {
+		updates["owner_id"] = ownerID
+	}
+	if err := db.Model(&models.Chart{}).Where("workspace_id = 0 OR project_id = 0 OR owner_id = 0").Updates(updates).Error; err != nil {
+		return err
+	}
+	if err := db.Model(&models.Dataset{}).Where("workspace_id = 0 OR project_id = 0 OR owner_id = 0").Updates(updates).Error; err != nil {
+		return err
+	}
+	if err := db.Model(&models.DataSource{}).Where("workspace_id = 0 OR project_id = 0 OR owner_id = 0").Updates(updates).Error; err != nil {
+		return err
+	}
+	if err := db.Model(&models.ChartGroup{}).Where("workspace_id = 0 OR project_id = 0 OR owner_id = 0").Updates(updates).Error; err != nil {
+		return err
+	}
+	if err := db.Model(&models.ChartTag{}).Where("workspace_id = 0 OR project_id = 0 OR owner_id = 0").Updates(updates).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func governanceRoleFromSystemRole(role models.UserRole) models.WorkspaceRole {
+	switch role {
+	case models.RoleAdmin:
+		return models.WorkspaceRoleOwner
+	case models.RoleEditor:
+		return models.WorkspaceRoleEditor
+	default:
+		return models.WorkspaceRoleViewer
+	}
+}
+
+func upsertWorkspaceMember(db *gorm.DB, workspaceID uint, userID uint, role models.WorkspaceRole) error {
+	var member models.WorkspaceMember
+	err := db.Where("workspace_id = ? AND user_id = ?", workspaceID, userID).First(&member).Error
+	if err == nil {
+		return db.Model(&member).Updates(map[string]any{"role": role, "updated_by": userID}).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+	return db.Create(&models.WorkspaceMember{WorkspaceID: workspaceID, UserID: userID, Role: role, CreatedBy: userID, UpdatedBy: userID}).Error
+}
+
+func upsertProjectMember(db *gorm.DB, projectID uint, userID uint, role models.WorkspaceRole) error {
+	var member models.ProjectMember
+	err := db.Where("project_id = ? AND user_id = ?", projectID, userID).First(&member).Error
+	if err == nil {
+		return db.Model(&member).Updates(map[string]any{"role": role, "updated_by": userID}).Error
+	}
+	if err != gorm.ErrRecordNotFound {
+		return err
+	}
+	return db.Create(&models.ProjectMember{ProjectID: projectID, UserID: userID, Role: role, CreatedBy: userID, UpdatedBy: userID}).Error
 }
 
 func seedUsers(db *gorm.DB, cfg config.Config) error {
@@ -98,6 +232,10 @@ func seedDatasets(db *gorm.DB) error {
 	if count > 0 {
 		return nil
 	}
+	scope, err := defaultGovernanceScope(db)
+	if err != nil {
+		return err
+	}
 
 	standardProfiles := standardDatasetProfiles()
 	directProfiles := directDatasetProfiles()
@@ -105,6 +243,9 @@ func seedDatasets(db *gorm.DB) error {
 	for i := 1; i <= 20; i++ {
 		profile := standardProfiles[(i-1)%len(standardProfiles)]
 		if err := db.Create(&models.Dataset{
+			WorkspaceID: scope.workspaceID,
+			ProjectID:   scope.projectID,
+			OwnerID:     scope.ownerID,
 			Name:        fmt.Sprintf("%s %02d", profile.NamePrefix, i),
 			Type:        models.DatasetTypeStandard,
 			Description: profile.Description,
@@ -112,6 +253,8 @@ func seedDatasets(db *gorm.DB) error {
 			Dimensions:  mustJSON(profile.Dimensions),
 			Measures:    mustJSON(profile.Measures),
 			Rows:        mustJSON(profile.Rows(i)),
+			CreatedBy:   scope.ownerID,
+			UpdatedBy:   scope.ownerID,
 		}).Error; err != nil {
 			return err
 		}
@@ -120,6 +263,9 @@ func seedDatasets(db *gorm.DB) error {
 	for i := 1; i <= 20; i++ {
 		profile := directProfiles[(i-1)%len(directProfiles)]
 		if err := db.Create(&models.Dataset{
+			WorkspaceID: scope.workspaceID,
+			ProjectID:   scope.projectID,
+			OwnerID:     scope.ownerID,
 			Name:        fmt.Sprintf("%s %02d", profile.NamePrefix, i),
 			Type:        models.DatasetTypeDirect,
 			Description: profile.Description,
@@ -127,11 +273,34 @@ func seedDatasets(db *gorm.DB) error {
 			Dimensions:  mustJSON(profile.Dimensions),
 			Measures:    mustJSON(profile.Measures),
 			Rows:        mustJSON(profile.Rows(i + 20)),
+			CreatedBy:   scope.ownerID,
+			UpdatedBy:   scope.ownerID,
 		}).Error; err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type defaultScope struct {
+	workspaceID uint
+	projectID   uint
+	ownerID     uint
+}
+
+func defaultGovernanceScope(db *gorm.DB) (defaultScope, error) {
+	if err := EnsureGovernanceDefaults(db); err != nil {
+		return defaultScope{}, err
+	}
+	var workspace models.Workspace
+	if err := db.Where("name = ?", "默认工作空间").First(&workspace).Error; err != nil {
+		return defaultScope{}, err
+	}
+	var project models.Project
+	if err := db.Where("workspace_id = ? AND name = ?", workspace.ID, "默认项目").First(&project).Error; err != nil {
+		return defaultScope{}, err
+	}
+	return defaultScope{workspaceID: workspace.ID, projectID: project.ID, ownerID: project.OwnerID}, nil
 }
 
 func refreshDatasets(db *gorm.DB) error {

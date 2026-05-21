@@ -17,6 +17,24 @@ func ValidRole(role UserRole) bool {
 	}
 }
 
+type WorkspaceRole string
+
+const (
+	WorkspaceRoleOwner  WorkspaceRole = "owner"
+	WorkspaceRoleAdmin  WorkspaceRole = "admin"
+	WorkspaceRoleEditor WorkspaceRole = "editor"
+	WorkspaceRoleViewer WorkspaceRole = "viewer"
+)
+
+func ValidWorkspaceRole(role WorkspaceRole) bool {
+	switch role {
+	case WorkspaceRoleOwner, WorkspaceRoleAdmin, WorkspaceRoleEditor, WorkspaceRoleViewer:
+		return true
+	default:
+		return false
+	}
+}
+
 type UserStatus string
 
 const (
@@ -67,6 +85,55 @@ const (
 func ValidDataSourceStatus(status DataSourceStatus) bool {
 	switch status {
 	case DataSourceStatusActive, DataSourceStatusDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+type ExportFormat string
+
+const (
+	ExportFormatCSV ExportFormat = "csv"
+	ExportFormatPNG ExportFormat = "png"
+)
+
+func ValidExportFormat(format ExportFormat) bool {
+	switch format {
+	case ExportFormatCSV, ExportFormatPNG:
+		return true
+	default:
+		return false
+	}
+}
+
+type SubscriptionFormat string
+
+const (
+	SubscriptionFormatCSV SubscriptionFormat = "csv"
+	SubscriptionFormatPNG SubscriptionFormat = "png"
+)
+
+func ValidSubscriptionFormat(format SubscriptionFormat) bool {
+	switch format {
+	case SubscriptionFormatCSV, SubscriptionFormatPNG:
+		return true
+	default:
+		return false
+	}
+}
+
+type SubscriptionFrequency string
+
+const (
+	SubscriptionFrequencyDaily  SubscriptionFrequency = "daily"
+	SubscriptionFrequencyWeekly SubscriptionFrequency = "weekly"
+	SubscriptionFrequencyManual SubscriptionFrequency = "manual"
+)
+
+func ValidSubscriptionFrequency(frequency SubscriptionFrequency) bool {
+	switch frequency {
+	case SubscriptionFrequencyDaily, SubscriptionFrequencyWeekly, SubscriptionFrequencyManual:
 		return true
 	default:
 		return false

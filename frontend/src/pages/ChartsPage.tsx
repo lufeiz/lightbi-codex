@@ -41,11 +41,11 @@ import {
   buildGroupTree,
   chartStatusOptions,
   chartTypeOptions,
-  formatDateByMoment,
   formatDateTime,
   groupToSelectOptions
 } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import type { ChartAsset, ChartGroup, ChartQuery, ChartTag, UserDTO } from '@/types/domain';
 import { chartStatusLabels, chartTypeLabels } from '@/types/domain';
 
@@ -90,7 +90,10 @@ export function ChartsPage() {
   const [tagModalOpen, setTagModalOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<ChartTag | null>(null);
   const user = useAuthStore((state) => state.user);
+  const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const projectId = useWorkspaceStore((state) => state.projectId);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
+  const scope = useMemo(() => ({ workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined }), [projectId, workspaceId]);
 
   const groupTree = useMemo(() => buildGroupTree(groups), [groups]);
   const groupOptions = useMemo(() => groupToSelectOptions(groups), [groups]);
@@ -99,7 +102,7 @@ export function ChartsPage() {
 
   const fetchDictionaries = useCallback(async () => {
     try {
-      const [groupData, tagData, userData] = await Promise.all([api.groups(), api.tags(), api.chartCreators()]);
+      const [groupData, tagData, userData] = await Promise.all([api.groups(scope), api.tags(scope), api.chartCreators()]);
       setGroups(groupData);
       setTags(tagData);
       setUsers(userData);
@@ -109,12 +112,12 @@ export function ChartsPage() {
       setTags([]);
       setUsers([]);
     }
-  }, []);
+  }, [scope]);
 
   const fetchCharts = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await api.charts(query);
+      const data = await api.charts({ ...query, ...scope });
       setCharts(data.items);
       setTotal(data.total);
     } catch (err) {
@@ -122,7 +125,7 @@ export function ChartsPage() {
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [query, scope]);
 
   useEffect(() => {
     void fetchDictionaries();
@@ -131,6 +134,11 @@ export function ChartsPage() {
   useEffect(() => {
     void fetchCharts();
   }, [fetchCharts]);
+
+  useEffect(() => {
+    setQuery((current) => ({ ...current, page: 1, groupId: undefined, tagIds: undefined }));
+    filterForm.setFieldsValue({ groupId: undefined, tagIds: undefined });
+  }, [filterForm, projectId, workspaceId]);
 
   const handleFilter = (values: FilterFormValues) => {
     setQuery((current) => ({
@@ -165,6 +173,7 @@ export function ChartsPage() {
   const submitGroup = async () => {
     const values = await groupForm.validateFields();
     const payload = {
+      ...scope,
       name: values.name,
       parentId: values.parentId ?? null,
       sortOrder: values.sortOrder ?? 0
@@ -205,7 +214,7 @@ export function ChartsPage() {
       await api.updateTag(editingTag.id, values);
       message.success('标签已更新');
     } else {
-      await api.createTag(values);
+      await api.createTag({ ...scope, ...values });
       message.success('标签已创建');
     }
     setTagModalOpen(false);
@@ -311,7 +320,7 @@ export function ChartsPage() {
       dataIndex: 'updatedAt',
       width: 160,
       render: (value: string) => (
-        <Tooltip title={formatDateByMoment(value)}>
+        <Tooltip title={formatDateTime(value)}>
           <span>{formatDateTime(value)}</span>
         </Tooltip>
       )
@@ -324,6 +333,11 @@ export function ChartsPage() {
           <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/charts/${record.id}/edit`)}>
             编辑
           </Button>
+          {record.status === 'published' && (
+            <Button size="small" onClick={() => navigate(`/dashboards/${record.id}`)}>
+              查看
+            </Button>
+          )}
           <Dropdown
             menu={{
               items: [
@@ -456,7 +470,7 @@ export function ChartsPage() {
                 { label: '卡片', value: 'card' }
               ]}
             />
-            <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite} onClick={() => navigate('/charts/new')}>
+            <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => navigate('/charts/new')}>
               创建仪表盘
             </Button>
           </Space>
