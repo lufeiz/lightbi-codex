@@ -23,6 +23,9 @@ type DatasetHandler struct {
 
 type datasetSummary struct {
 	ID           uint               `json:"id"`
+	WorkspaceID  uint               `json:"workspaceId"`
+	ProjectID    uint               `json:"projectId"`
+	OwnerID      uint               `json:"ownerId"`
 	Name         string             `json:"name"`
 	Type         models.DatasetType `json:"type"`
 	Description  string             `json:"description"`
@@ -53,6 +56,8 @@ type datasetDetail struct {
 }
 
 type datasetRequest struct {
+	WorkspaceID  *uint              `json:"workspaceId"`
+	ProjectID    *uint              `json:"projectId"`
 	Name         string             `json:"name"`
 	Type         models.DatasetType `json:"type"`
 	Description  string             `json:"description"`
@@ -68,7 +73,7 @@ type datasetRequest struct {
 }
 
 func (h DatasetHandler) List(c *gin.Context) {
-	query := h.DB.Model(&models.Dataset{})
+	query := addProjectFilter(c, h.DB, h.DB.Model(&models.Dataset{}), "project_id")
 	if datasetType := models.DatasetType(c.Query("type")); datasetType != "" {
 		if !models.ValidDatasetType(datasetType) {
 			Fail(c, http.StatusBadRequest, "invalid dataset type")
@@ -96,6 +101,11 @@ func (h DatasetHandler) Get(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "dataset not found")
 		return
 	}
+	user, _ := middleware.CurrentUser(c)
+	if !canReadProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
+		return
+	}
 
 	detail, err := toDatasetDetail(dataset, true)
 	if err != nil {
@@ -112,7 +122,16 @@ func (h DatasetHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "invalid dataset payload")
 		return
 	}
-	dataset, err := h.datasetFromRequest(req, user.ID, user.ID)
+	workspaceID, projectID := requestScopeFromRaw(req.WorkspaceID, req.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
+	dataset, err := h.datasetFromRequest(req, scope, user.ID, user.ID)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
@@ -121,6 +140,7 @@ func (h DatasetHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "create dataset failed")
 		return
 	}
+	audit(h.DB, user.ID, dataset.WorkspaceID, dataset.ProjectID, "dataset.create", "dataset", dataset.ID, "创建数据集", nil)
 	Created(c, toDatasetSummary(dataset))
 }
 
@@ -131,12 +151,17 @@ func (h DatasetHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "dataset not found")
 		return
 	}
+	if !canWriteProject(h.DB, user, existing.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
+		return
+	}
 	var req datasetRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, http.StatusBadRequest, "invalid dataset payload")
 		return
 	}
-	next, err := h.datasetFromRequest(req, existing.CreatedBy, user.ID)
+	scope := assetScope{WorkspaceID: existing.WorkspaceID, ProjectID: existing.ProjectID}
+	next, err := h.datasetFromRequest(req, scope, existing.CreatedBy, user.ID)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
@@ -164,13 +189,19 @@ func (h DatasetHandler) Update(c *gin.Context) {
 	}
 	_ = services.RefreshDatasetQueryCache(h.DB, existing.ID)
 	h.DB.First(&existing, existing.ID)
+	audit(h.DB, user.ID, existing.WorkspaceID, existing.ProjectID, "dataset.update", "dataset", existing.ID, "更新数据集", nil)
 	OK(c, toDatasetSummary(existing))
 }
 
 func (h DatasetHandler) Delete(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
 	var dataset models.Dataset
 	if err := h.DB.First(&dataset, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
 		return
 	}
 	if err := h.DB.Delete(&dataset).Error; err != nil {
@@ -178,6 +209,7 @@ func (h DatasetHandler) Delete(c *gin.Context) {
 		return
 	}
 	_ = services.RefreshDatasetQueryCache(h.DB, dataset.ID)
+	audit(h.DB, user.ID, dataset.WorkspaceID, dataset.ProjectID, "dataset.delete", "dataset", dataset.ID, "删除数据集", nil)
 	OK(c, gin.H{"deleted": true})
 }
 
@@ -185,6 +217,11 @@ func (h DatasetHandler) Fields(c *gin.Context) {
 	var dataset models.Dataset
 	if err := h.DB.First(&dataset, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	user, _ := middleware.CurrentUser(c)
+	if !canReadProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
 		return
 	}
 
@@ -200,6 +237,11 @@ func (h DatasetHandler) Rows(c *gin.Context) {
 	var dataset models.Dataset
 	if err := h.DB.First(&dataset, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	user, _ := middleware.CurrentUser(c)
+	if !canReadProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
 		return
 	}
 	if dataset.Type == models.DatasetTypeSQL {
@@ -223,9 +265,19 @@ func (h DatasetHandler) Query(c *gin.Context) {
 }
 
 func (h DatasetHandler) Refresh(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
 	id, ok := parseUint(c.Param("id"))
 	if !ok {
 		Fail(c, http.StatusBadRequest, "invalid dataset id")
+		return
+	}
+	var dataset models.Dataset
+	if err := h.DB.First(&dataset, id).Error; err != nil {
+		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
 		return
 	}
 	if err := services.RefreshDatasetQueryCache(h.DB, id); err != nil {
@@ -238,9 +290,19 @@ func (h DatasetHandler) Refresh(c *gin.Context) {
 }
 
 func (h DatasetHandler) query(c *gin.Context, preview bool) {
+	user, _ := middleware.CurrentUser(c)
 	id, ok := parseUint(c.Param("id"))
 	if !ok {
 		Fail(c, http.StatusBadRequest, "invalid dataset id")
+		return
+	}
+	var dataset models.Dataset
+	if err := h.DB.First(&dataset, id).Error; err != nil {
+		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	if !canReadProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
 		return
 	}
 	var req services.DatasetQueryRequest
@@ -258,7 +320,7 @@ func (h DatasetHandler) query(c *gin.Context, preview bool) {
 	OK(c, response)
 }
 
-func (h DatasetHandler) datasetFromRequest(req datasetRequest, createdBy uint, updatedBy uint) (models.Dataset, error) {
+func (h DatasetHandler) datasetFromRequest(req datasetRequest, scope assetScope, createdBy uint, updatedBy uint) (models.Dataset, error) {
 	if req.Name == "" {
 		return models.Dataset{}, errBadRequest("dataset name is required")
 	}
@@ -275,7 +337,7 @@ func (h DatasetHandler) datasetFromRequest(req datasetRequest, createdBy uint, u
 		if _, err := services.NormalizeReadOnlySQL(req.QuerySQL); err != nil {
 			return models.Dataset{}, err
 		}
-		if !h.dataSourceExists(*req.DataSourceID) {
+		if !h.dataSourceExists(*req.DataSourceID, scope.ProjectID) {
 			return models.Dataset{}, errBadRequest("data source not found")
 		}
 	}
@@ -308,6 +370,9 @@ func (h DatasetHandler) datasetFromRequest(req datasetRequest, createdBy uint, u
 		sourceName = "manual"
 	}
 	return models.Dataset{
+		WorkspaceID:  scope.WorkspaceID,
+		ProjectID:    scope.ProjectID,
+		OwnerID:      createdBy,
 		Name:         req.Name,
 		Type:         req.Type,
 		Description:  req.Description,
@@ -328,9 +393,9 @@ func (h DatasetHandler) datasetFromRequest(req datasetRequest, createdBy uint, u
 	}, nil
 }
 
-func (h DatasetHandler) dataSourceExists(id uint) bool {
+func (h DatasetHandler) dataSourceExists(id uint, projectID uint) bool {
 	var count int64
-	if err := h.DB.Model(&models.DataSource{}).Where("id = ? AND status = ?", id, models.DataSourceStatusActive).Count(&count).Error; err != nil {
+	if err := h.DB.Model(&models.DataSource{}).Where("id = ? AND project_id = ? AND status = ?", id, projectID, models.DataSourceStatusActive).Count(&count).Error; err != nil {
 		return false
 	}
 	return count > 0
@@ -339,6 +404,9 @@ func (h DatasetHandler) dataSourceExists(id uint) bool {
 func toDatasetSummary(dataset models.Dataset) datasetSummary {
 	return datasetSummary{
 		ID:           dataset.ID,
+		WorkspaceID:  dataset.WorkspaceID,
+		ProjectID:    dataset.ProjectID,
+		OwnerID:      dataset.OwnerID,
 		Name:         dataset.Name,
 		Type:         dataset.Type,
 		Description:  dataset.Description,

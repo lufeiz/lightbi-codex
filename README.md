@@ -11,8 +11,11 @@ LightBI 是一个首版 BI 图表资产管理系统骨架，包含 React 前端�
 - 图表配置 CRUD，配置 JSON 落库
 - MySQL / PostgreSQL 外部数据源管理、连接测试
 - SQL 数据集管理、服务端聚合查询、查询缓存和手动刷新
+- 多工作空间 / 多项目 / 成员角色，资产按 workspace/project 做对象级权限隔离
+- 已发布仪表盘只读消费页、分享链接、嵌入页、CSV/PNG 导出和应用内订阅
+- 发布版本历史、版本回滚和审计日志
 - 创建/编辑图表页面：左侧图表选择，中间预览画布，右侧配置表单
-- AntV G2/S2 渲染图表和表格，X6 提供画布底层能力，F2 作为移动端小图表依赖预留
+- AntV G2/S2 渲染图表和表格，X6 提供画布底层能力；路由和图表库按需懒加载
 
 ## 目录结构
 
@@ -77,9 +80,23 @@ DATA_SOURCE_CREDENTIAL_KEY=replace-with-a-long-data-source-credential-key
 cd frontend
 npm run typecheck
 npm run build
+npm run e2e
 
 cd ../backend
 go test ./...
 ```
 
 当前工作站如果没有安装 Go，需要先安装 Go 后再执行后端验证。
+
+## P2/P3 API 概览
+
+- 工作空间与项目：`GET/POST /api/workspaces`、`PUT /api/workspaces/:id`、`GET/POST /api/workspaces/:id/members`、`GET/POST /api/projects`、`PUT /api/projects/:id`、`GET/POST /api/projects/:id/members`
+- 发布消费：`GET /api/dashboards/:id/published`、`GET /api/public/shares/:token`、`GET /api/public/embeds/:token`
+- 版本与审计：`GET /api/charts/:id/versions`、`GET /api/charts/:id/versions/:versionId`、`POST /api/charts/:id/rollback`、`GET /api/charts/:id/audit-logs`
+- 分享、导出、订阅：`GET/POST/PUT/DELETE /api/charts/:id/share-links`、`POST /api/charts/:id/export`、`GET/POST/PUT/DELETE /api/charts/:id/subscriptions`、`POST /api/subscriptions/:id/run`
+
+## 治理与迁移说明
+
+开发环境开启 `RUN_AUTO_MIGRATE=true` 时会自动创建默认工作空间和默认项目，并把历史 chart、dataset、data source、group、tag 迁移到默认项目；生产环境仍建议使用显式版本化 migration。系统级 `admin/editor/viewer` 继续保留，workspace/project 成员角色用于对象级权限控制。
+
+发布操作会创建 `ChartVersion` 快照并写入 `AuditLog`；分享链接只保存 token hash，接口只在创建时返回明文 token。应用内订阅当前保存规则和运行记录，不发送邮件。

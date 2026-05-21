@@ -1,5 +1,6 @@
 export type UserRole = 'admin' | 'editor' | 'viewer';
 export type UserStatus = 'active' | 'disabled';
+export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
 
 export interface UserDTO {
   id: number;
@@ -33,6 +34,53 @@ export type ChartStatus = 'draft' | 'published' | 'archived';
 export type DatasetType = 'standard' | 'direct' | 'sql';
 export type DataSourceType = 'mysql' | 'postgres';
 export type DataSourceStatus = 'active' | 'disabled';
+export type ExportFormat = 'csv' | 'png';
+export type SubscriptionFormat = 'csv' | 'png';
+export type SubscriptionFrequency = 'daily' | 'weekly' | 'manual';
+
+export interface WorkspaceSummary {
+  id: number;
+  name: string;
+  description: string;
+  createdBy: number;
+  updatedBy: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WorkspaceMember {
+  id: number;
+  workspaceId: number;
+  userId: number;
+  user?: UserDTO;
+  role: WorkspaceRole;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectSummary {
+  id: number;
+  workspaceId: number;
+  workspace?: WorkspaceSummary;
+  name: string;
+  description: string;
+  ownerId: number;
+  owner?: UserDTO;
+  createdBy: number;
+  updatedBy: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectMember {
+  id: number;
+  projectId: number;
+  userId: number;
+  user?: UserDTO;
+  role: WorkspaceRole;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface DatasetField {
   name: string;
@@ -42,6 +90,9 @@ export interface DatasetField {
 
 export interface DatasetSummary {
   id: number;
+  workspaceId: number;
+  projectId: number;
+  ownerId: number;
   name: string;
   type: DatasetType;
   description: string;
@@ -67,6 +118,9 @@ export type DataRow = Record<string, string | number | null>;
 
 export interface DataSourceSummary {
   id: number;
+  workspaceId: number;
+  projectId: number;
+  ownerId: number;
   name: string;
   type: DataSourceType;
   status: DataSourceStatus;
@@ -84,6 +138,8 @@ export interface DataSourceSummary {
 }
 
 export interface DataSourceMutationPayload {
+  workspaceId?: number;
+  projectId?: number;
   name: string;
   type: DataSourceType;
   status: DataSourceStatus;
@@ -101,6 +157,8 @@ export interface DataSourceMutationPayload {
 }
 
 export interface DatasetMutationPayload {
+  workspaceId?: number;
+  projectId?: number;
   name: string;
   type: DatasetType;
   description: string;
@@ -164,6 +222,9 @@ export interface DatasetQueryResponse {
 
 export interface ChartTag {
   id: number;
+  workspaceId: number;
+  projectId: number;
+  ownerId: number;
   name: string;
   color: string;
   createdBy: number;
@@ -174,6 +235,9 @@ export interface ChartTag {
 
 export interface ChartGroup {
   id: number;
+  workspaceId: number;
+  projectId: number;
+  ownerId: number;
   parentId: number | null;
   name: string;
   sortOrder: number;
@@ -249,6 +313,9 @@ export interface ChartDocument {
 
 export interface ChartAsset {
   id: number;
+  workspaceId: number;
+  projectId: number;
+  ownerId: number;
   name: string;
   description: string;
   type: ChartType;
@@ -273,6 +340,8 @@ export interface ChartListResponse {
 }
 
 export interface ChartQuery {
+  workspaceId?: number;
+  projectId?: number;
   keyword?: string;
   type?: ChartType;
   status?: ChartStatus;
@@ -288,6 +357,8 @@ export interface ChartQuery {
 }
 
 export interface ChartMutationPayload {
+  workspaceId?: number;
+  projectId?: number;
   name: string;
   description: string;
   type: ChartType;
@@ -315,6 +386,87 @@ export interface AuthResponse {
   tokenType: 'Bearer';
   expiresIn: number;
   user: UserDTO;
+}
+
+export interface ChartVersion {
+  id: number;
+  chartId: number;
+  workspaceId: number;
+  projectId: number;
+  version: number;
+  name: string;
+  description: string;
+  type: ChartType;
+  config: ChartDocument;
+  publishedBy: number;
+  publisher?: UserDTO;
+  createdAt: string;
+}
+
+export interface AuditLogEntry {
+  id: number;
+  workspaceId: number;
+  projectId: number;
+  actorId: number;
+  actor?: UserDTO;
+  action: string;
+  objectType: string;
+  objectId: number;
+  summary: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface DashboardShareLink {
+  id: number;
+  chartId: number;
+  name: string;
+  token?: string;
+  tokenPrefix: string;
+  enabled: boolean;
+  allowEmbed: boolean;
+  expiresAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DashboardSubscription {
+  id: number;
+  chartId: number;
+  workspaceId: number;
+  projectId: number;
+  name: string;
+  format: SubscriptionFormat;
+  frequency: SubscriptionFrequency;
+  enabled: boolean;
+  nextRunAt?: string | null;
+  lastRunAt?: string | null;
+  lastStatus: string;
+  lastResult?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExportRequest {
+  format: ExportFormat;
+  widgetId?: string;
+}
+
+export interface ExportResponse {
+  format: ExportFormat;
+  filename: string;
+  mimeType: string;
+  content?: string;
+  renderUrl?: string;
+  rowCount: number;
+}
+
+export interface PublishedDashboard {
+  chart: ChartAsset;
+  version?: ChartVersion;
+  shareLink?: DashboardShareLink;
+  runtimeRows: Record<string, DataRow[]>;
+  embed: boolean;
 }
 
 export const chartTypeLabels: Record<ChartType, string> = {

@@ -15,14 +15,17 @@ type GroupHandler struct {
 }
 
 type groupRequest struct {
-	Name      string `json:"name"`
-	ParentID  *uint  `json:"parentId"`
-	SortOrder int    `json:"sortOrder"`
+	WorkspaceID *uint  `json:"workspaceId"`
+	ProjectID   *uint  `json:"projectId"`
+	Name        string `json:"name"`
+	ParentID    *uint  `json:"parentId"`
+	SortOrder   int    `json:"sortOrder"`
 }
 
 func (h GroupHandler) List(c *gin.Context) {
 	var groups []models.ChartGroup
-	if err := h.DB.Order("parent_id IS NOT NULL, parent_id ASC, sort_order ASC, name ASC").Find(&groups).Error; err != nil {
+	query := addProjectFilter(c, h.DB, h.DB.Model(&models.ChartGroup{}), "project_id")
+	if err := query.Order("parent_id IS NOT NULL, parent_id ASC, sort_order ASC, name ASC").Find(&groups).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "list groups failed")
 		return
 	}
@@ -36,20 +39,32 @@ func (h GroupHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "group name is required")
 		return
 	}
+	workspaceID, projectID := requestScopeFromRaw(req.WorkspaceID, req.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
 	if req.ParentID != nil {
 		var parent models.ChartGroup
-		if err := h.DB.First(&parent, *req.ParentID).Error; err != nil {
+		if err := h.DB.Where("project_id = ?", scope.ProjectID).First(&parent, *req.ParentID).Error; err != nil {
 			Fail(c, http.StatusBadRequest, "parent group not found")
 			return
 		}
 	}
 
 	group := models.ChartGroup{
-		Name:      req.Name,
-		ParentID:  req.ParentID,
-		SortOrder: req.SortOrder,
-		CreatedBy: user.ID,
-		UpdatedBy: user.ID,
+		WorkspaceID: scope.WorkspaceID,
+		ProjectID:   scope.ProjectID,
+		OwnerID:     user.ID,
+		Name:        req.Name,
+		ParentID:    req.ParentID,
+		SortOrder:   req.SortOrder,
+		CreatedBy:   user.ID,
+		UpdatedBy:   user.ID,
 	}
 	if err := h.DB.Create(&group).Error; err != nil {
 		Fail(c, http.StatusBadRequest, "create group failed")
@@ -65,6 +80,10 @@ func (h GroupHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusNotFound, "group not found")
 		return
 	}
+	if !canWriteProject(h.DB, user, group.ProjectID) {
+		Fail(c, http.StatusForbidden, "group permission denied")
+		return
+	}
 
 	var req groupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -77,16 +96,16 @@ func (h GroupHandler) Update(c *gin.Context) {
 	}
 	if req.ParentID != nil {
 		var parent models.ChartGroup
-		if err := h.DB.First(&parent, *req.ParentID).Error; err != nil {
+		if err := h.DB.Where("project_id = ?", group.ProjectID).First(&parent, *req.ParentID).Error; err != nil {
 			Fail(c, http.StatusBadRequest, "parent group not found")
 			return
 		}
 	}
 
 	updates := map[string]interface{}{
-		"parent_id":   req.ParentID,
-		"sort_order":  req.SortOrder,
-		"updated_by":  user.ID,
+		"parent_id":  req.ParentID,
+		"sort_order": req.SortOrder,
+		"updated_by": user.ID,
 	}
 	if req.Name != "" {
 		updates["name"] = req.Name
@@ -100,9 +119,14 @@ func (h GroupHandler) Update(c *gin.Context) {
 }
 
 func (h GroupHandler) Delete(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
 	var group models.ChartGroup
 	if err := h.DB.First(&group, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "group not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, group.ProjectID) {
+		Fail(c, http.StatusForbidden, "group permission denied")
 		return
 	}
 

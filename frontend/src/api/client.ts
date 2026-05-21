@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  AuditLogEntry,
   ChartAsset,
   ChartGroup,
   ChartListResponse,
@@ -8,6 +9,8 @@ import type {
   ChartTag,
   DataSourceMutationPayload,
   DataSourceSummary,
+  DashboardShareLink,
+  DashboardSubscription,
   DatasetDetail,
   DatasetField,
   DatasetMutationPayload,
@@ -15,9 +18,17 @@ import type {
   DatasetQueryResponse,
   DatasetSummary,
   DatasetType,
+  ExportRequest,
+  ExportResponse,
   LoginPayload,
+  ProjectMember,
+  ProjectSummary,
+  PublishedDashboard,
   RegisterPayload,
-  UserDTO
+  UserDTO,
+  WorkspaceMember,
+  WorkspaceSummary,
+  ChartVersion
 } from '@/types/domain';
 
 interface APIEnvelope<T> {
@@ -127,6 +138,63 @@ export const api = {
   chartCreators() {
     return request<UserDTO[]>('/charts/creators');
   },
+  workspaces() {
+    return request<WorkspaceSummary[]>('/workspaces');
+  },
+  createWorkspace(payload: Pick<WorkspaceSummary, 'name' | 'description'>) {
+    return request<WorkspaceSummary>('/workspaces', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateWorkspace(id: number, payload: Pick<WorkspaceSummary, 'name' | 'description'>) {
+    return request<WorkspaceSummary>(`/workspaces/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  workspaceMembers(id: number) {
+    return request<WorkspaceMember[]>(`/workspaces/${id}/members`);
+  },
+  upsertWorkspaceMember(id: number, payload: { userId: number; role: WorkspaceMember['role'] }) {
+    return request<WorkspaceMember>(`/workspaces/${id}/members`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  projects(workspaceId?: number) {
+    return request<ProjectSummary[]>(`/projects${toQuery({ workspaceId })}`);
+  },
+  createProject(payload: Pick<ProjectSummary, 'workspaceId' | 'name' | 'description'> & { ownerId?: number }) {
+    return request<ProjectSummary>('/projects', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateProject(id: number, payload: Partial<Pick<ProjectSummary, 'name' | 'description' | 'ownerId'>>) {
+    return request<ProjectSummary>(`/projects/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  projectMembers(id: number) {
+    return request<ProjectMember[]>(`/projects/${id}/members`);
+  },
+  upsertProjectMember(id: number, payload: { userId: number; role: ProjectMember['role'] }) {
+    return request<ProjectMember>(`/projects/${id}/members`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  publishedDashboard(id: number) {
+    return request<PublishedDashboard>(`/dashboards/${id}/published`);
+  },
+  publicShare(token: string) {
+    return request<PublishedDashboard>(`/public/shares/${encodeURIComponent(token)}`, {}, false);
+  },
+  publicEmbed(token: string) {
+    return request<PublishedDashboard>(`/public/embeds/${encodeURIComponent(token)}`, {}, false);
+  },
   charts(query: ChartQuery) {
     return request<ChartListResponse>(`/charts${toQuery(query)}`);
   },
@@ -157,10 +225,70 @@ export const api = {
   archiveChart(id: number) {
     return request<ChartAsset>(`/charts/${id}/archive`, { method: 'POST' });
   },
-  groups() {
-    return request<ChartGroup[]>('/chart-groups');
+  chartVersions(id: number) {
+    return request<ChartVersion[]>(`/charts/${id}/versions`);
   },
-  createGroup(payload: Pick<ChartGroup, 'name' | 'parentId' | 'sortOrder'>) {
+  chartVersion(id: number, versionId: number) {
+    return request<ChartVersion>(`/charts/${id}/versions/${versionId}`);
+  },
+  rollbackChart(id: number, versionId: number) {
+    return request<ChartAsset>(`/charts/${id}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ versionId })
+    });
+  },
+  chartAuditLogs(id: number) {
+    return request<AuditLogEntry[]>(`/charts/${id}/audit-logs`);
+  },
+  shareLinks(id: number) {
+    return request<DashboardShareLink[]>(`/charts/${id}/share-links`);
+  },
+  createShareLink(id: number, payload: { name: string; enabled?: boolean; allowEmbed: boolean; expiresAt?: string | null }) {
+    return request<DashboardShareLink>(`/charts/${id}/share-links`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateShareLink(id: number, linkId: number, payload: { name?: string; enabled?: boolean; allowEmbed: boolean; expiresAt?: string | null }) {
+    return request<DashboardShareLink>(`/charts/${id}/share-links/${linkId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteShareLink(id: number, linkId: number) {
+    return request<{ deleted: boolean }>(`/charts/${id}/share-links/${linkId}`, { method: 'DELETE' });
+  },
+  exportChart(id: number, payload: ExportRequest) {
+    return request<ExportResponse>(`/charts/${id}/export`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  subscriptions(id: number) {
+    return request<DashboardSubscription[]>(`/charts/${id}/subscriptions`);
+  },
+  createSubscription(id: number, payload: Pick<DashboardSubscription, 'name' | 'format' | 'frequency'> & { enabled?: boolean; nextRunAt?: string | null }) {
+    return request<DashboardSubscription>(`/charts/${id}/subscriptions`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateSubscription(id: number, subscriptionId: number, payload: Partial<Pick<DashboardSubscription, 'name' | 'format' | 'frequency' | 'enabled' | 'nextRunAt'>>) {
+    return request<DashboardSubscription>(`/charts/${id}/subscriptions/${subscriptionId}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteSubscription(id: number, subscriptionId: number) {
+    return request<{ deleted: boolean }>(`/charts/${id}/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+  },
+  runSubscription(id: number) {
+    return request<DashboardSubscription>(`/subscriptions/${id}/run`, { method: 'POST' });
+  },
+  groups(scope?: { workspaceId?: number; projectId?: number }) {
+    return request<ChartGroup[]>(`/chart-groups${toQuery(scope ?? {})}`);
+  },
+  createGroup(payload: Pick<ChartGroup, 'name' | 'parentId' | 'sortOrder'> & { workspaceId?: number; projectId?: number }) {
     return request<ChartGroup>('/chart-groups', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -175,10 +303,10 @@ export const api = {
   deleteGroup(id: number) {
     return request<{ deleted: boolean }>(`/chart-groups/${id}`, { method: 'DELETE' });
   },
-  tags() {
-    return request<ChartTag[]>('/chart-tags');
+  tags(scope?: { workspaceId?: number; projectId?: number }) {
+    return request<ChartTag[]>(`/chart-tags${toQuery(scope ?? {})}`);
   },
-  createTag(payload: Pick<ChartTag, 'name' | 'color'>) {
+  createTag(payload: Pick<ChartTag, 'name' | 'color'> & { workspaceId?: number; projectId?: number }) {
     return request<ChartTag>('/chart-tags', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -193,8 +321,8 @@ export const api = {
   deleteTag(id: number) {
     return request<{ deleted: boolean }>(`/chart-tags/${id}`, { method: 'DELETE' });
   },
-  dataSources() {
-    return request<DataSourceSummary[]>('/data-sources');
+  dataSources(scope?: { workspaceId?: number; projectId?: number }) {
+    return request<DataSourceSummary[]>(`/data-sources${toQuery(scope ?? {})}`);
   },
   createDataSource(payload: DataSourceMutationPayload) {
     return request<DataSourceSummary>('/data-sources', {
@@ -214,8 +342,8 @@ export const api = {
   testDataSource(id: number) {
     return request<{ ok: boolean }>(`/data-sources/${id}/test`, { method: 'POST' });
   },
-  datasets(type?: DatasetType) {
-    return request<DatasetSummary[]>(`/datasets${toQuery({ type })}`);
+  datasets(type?: DatasetType, scope?: { workspaceId?: number; projectId?: number }) {
+    return request<DatasetSummary[]>(`/datasets${toQuery({ type, ...(scope ?? {}) })}`);
   },
   dataset(id: number) {
     return request<DatasetDetail>(`/datasets/${id}`);

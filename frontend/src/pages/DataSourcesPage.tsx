@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { api } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import type { DataSourceMutationPayload, DataSourceSummary } from '@/types/domain';
 import { dataSourceStatusLabels, dataSourceTypeLabels } from '@/types/domain';
 
@@ -17,18 +18,20 @@ export function DataSourcesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<DataSourceSummary | null>(null);
   const user = useAuthStore((state) => state.user);
+  const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const projectId = useWorkspaceStore((state) => state.projectId);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      setItems(await api.dataSources());
+      setItems(await api.dataSources({ workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined }));
     } catch (err) {
       message.error(err instanceof Error ? err.message : '加载数据源失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [projectId, workspaceId]);
 
   useEffect(() => {
     void fetchItems();
@@ -58,11 +61,12 @@ export function DataSourcesPage() {
     const values = await form.validateFields();
     setSaving(true);
     try {
+      const payload = { ...values, workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined };
       if (editing) {
-        await api.updateDataSource(editing.id, values);
+        await api.updateDataSource(editing.id, payload);
         message.success('数据源已更新');
       } else {
-        await api.createDataSource(values);
+        await api.createDataSource(payload);
         message.success('数据源已创建');
       }
       setModalOpen(false);
@@ -133,7 +137,7 @@ export function DataSourcesPage() {
           <Typography.Title level={3}>数据源管理</Typography.Title>
           <Typography.Text type="secondary">维护 MySQL 和 PostgreSQL 外部分析数据源。</Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite} onClick={() => openModal()}>
+        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => openModal()}>
           新建数据源
         </Button>
       </div>

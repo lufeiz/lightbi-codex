@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
+import { useWorkspaceStore } from '@/store/workspaceStore';
 import type { DataRow, DataSourceSummary, DatasetField, DatasetMutationPayload, DatasetSummary } from '@/types/domain';
 import { datasetTypeLabels } from '@/types/domain';
 
@@ -23,13 +24,16 @@ export function DatasetsPage() {
   const [editing, setEditing] = useState<DatasetSummary | null>(null);
   const [previewRows, setPreviewRows] = useState<DataRow[]>([]);
   const user = useAuthStore((state) => state.user);
+  const workspaceId = useWorkspaceStore((state) => state.workspaceId);
+  const projectId = useWorkspaceStore((state) => state.projectId);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
   const sourceOptions = useMemo(() => sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.type}` })), [sources]);
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
     try {
-      const [datasetData, sourceData] = await Promise.all([api.datasets(), api.dataSources()]);
+      const scope = { workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined };
+      const [datasetData, sourceData] = await Promise.all([api.datasets(undefined, scope), api.dataSources(scope)]);
       setItems(datasetData);
       setSources(sourceData);
     } catch (err) {
@@ -37,7 +41,7 @@ export function DatasetsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [projectId, workspaceId]);
 
   useEffect(() => {
     void fetchItems();
@@ -83,6 +87,8 @@ export function DatasetsPage() {
   const buildPayload = async (): Promise<DatasetMutationPayload> => {
     const values = await form.validateFields();
     return {
+      workspaceId: workspaceId ?? undefined,
+      projectId: projectId ?? undefined,
       name: values.name,
       type: values.type,
       description: values.description ?? '',
@@ -179,7 +185,7 @@ export function DatasetsPage() {
           <Typography.Title level={3}>数据集管理</Typography.Title>
           <Typography.Text type="secondary">维护 SQL 数据集、字段元数据和查询缓存策略。</Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite} onClick={() => void openModal()}>
+        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => void openModal()}>
           新建数据集
         </Button>
       </div>

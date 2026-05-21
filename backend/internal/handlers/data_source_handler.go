@@ -23,6 +23,8 @@ type DataSourceHandler struct {
 }
 
 type dataSourceRequest struct {
+	WorkspaceID         *uint                   `json:"workspaceId"`
+	ProjectID           *uint                   `json:"projectId"`
 	Name                string                  `json:"name"`
 	Type                models.DataSourceType   `json:"type"`
 	Status              models.DataSourceStatus `json:"status"`
@@ -41,7 +43,8 @@ type dataSourceRequest struct {
 
 func (h DataSourceHandler) List(c *gin.Context) {
 	var sources []models.DataSource
-	if err := h.DB.Order("updated_at DESC").Find(&sources).Error; err != nil {
+	query := addProjectFilter(c, h.DB, h.DB.Model(&models.DataSource{}), "project_id")
+	if err := query.Order("updated_at DESC").Find(&sources).Error; err != nil {
 		Fail(c, http.StatusInternalServerError, "list data sources failed")
 		return
 	}
@@ -59,6 +62,15 @@ func (h DataSourceHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	workspaceID, projectID := requestScopeFromRaw(req.WorkspaceID, req.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
 	encrypted, err := services.EncryptSecret(h.Config.DataSourceKey, req.Password)
 	if err != nil {
 		Fail(c, http.StatusInternalServerError, "encrypt data source password failed")
@@ -66,6 +78,9 @@ func (h DataSourceHandler) Create(c *gin.Context) {
 	}
 	params, _ := json.Marshal(req.Params)
 	source := models.DataSource{
+		WorkspaceID:         scope.WorkspaceID,
+		ProjectID:           scope.ProjectID,
+		OwnerID:             user.ID,
 		Name:                req.Name,
 		Type:                req.Type,
 		Status:              defaultDataSourceStatus(req.Status),
@@ -87,6 +102,7 @@ func (h DataSourceHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "create data source failed")
 		return
 	}
+	audit(h.DB, user.ID, source.WorkspaceID, source.ProjectID, "data_source.create", "data_source", source.ID, "创建数据源", nil)
 	Created(c, source)
 }
 
@@ -95,6 +111,10 @@ func (h DataSourceHandler) Update(c *gin.Context) {
 	var source models.DataSource
 	if err := h.DB.First(&source, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "data source not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, source.ProjectID) {
+		Fail(c, http.StatusForbidden, "data source permission denied")
 		return
 	}
 	var req dataSourceRequest
@@ -136,13 +156,19 @@ func (h DataSourceHandler) Update(c *gin.Context) {
 		return
 	}
 	h.DB.First(&source, source.ID)
+	audit(h.DB, user.ID, source.WorkspaceID, source.ProjectID, "data_source.update", "data_source", source.ID, "更新数据源", nil)
 	OK(c, source)
 }
 
 func (h DataSourceHandler) Delete(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
 	var source models.DataSource
 	if err := h.DB.First(&source, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "data source not found")
+		return
+	}
+	if !canWriteProject(h.DB, user, source.ProjectID) {
+		Fail(c, http.StatusForbidden, "data source permission denied")
 		return
 	}
 	var count int64
@@ -158,6 +184,7 @@ func (h DataSourceHandler) Delete(c *gin.Context) {
 		Fail(c, http.StatusInternalServerError, "delete data source failed")
 		return
 	}
+	audit(h.DB, user.ID, source.WorkspaceID, source.ProjectID, "data_source.delete", "data_source", source.ID, "删除数据源", nil)
 	OK(c, gin.H{"deleted": true})
 }
 
@@ -165,6 +192,11 @@ func (h DataSourceHandler) Test(c *gin.Context) {
 	var source models.DataSource
 	if err := h.DB.First(&source, c.Param("id")).Error; err != nil {
 		Fail(c, http.StatusNotFound, "data source not found")
+		return
+	}
+	user, _ := middleware.CurrentUser(c)
+	if !canWriteProject(h.DB, user, source.ProjectID) {
+		Fail(c, http.StatusForbidden, "data source permission denied")
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)

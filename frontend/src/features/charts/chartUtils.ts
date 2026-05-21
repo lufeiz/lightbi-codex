@@ -1,5 +1,4 @@
 import dayjs from 'dayjs';
-import moment from 'moment';
 
 import type { ChartGroup, ChartGroupTreeNode, ChartStatus, ChartType } from '@/types/domain';
 import type { DataRow } from '@/types/domain';
@@ -45,7 +44,7 @@ export function formatDateByMoment(value?: string): string {
   if (!value) {
     return '-';
   }
-  return moment(value).format('YYYY-MM-DD');
+  return dayjs(value).format('YYYY-MM-DD');
 }
 
 export const sampleRows: DataRow[] = [
