@@ -104,12 +104,23 @@ export interface ChartWidget {
 }
 
 export interface DashboardFilters {
-  timeRange: [string, string] | null;
-  chartDimensionFilters: Record<string, DashboardDimensionFilter[]>;
+  timeFilter: DashboardTimeFilter;
+  dimensionControls: DashboardDimensionFilter[];
+}
+
+export interface DashboardTimeFilter {
+  label: string;
+  chartId?: string;
+  range: [string, string] | null;
 }
 
 export interface DashboardDimensionFilter {
+  id: string;
+  label: string;
+  chartId?: string;
+  chartIds?: string[];
   field: string;
+  fieldsByChart?: Record<string, string>;
   values: string[];
 }
 

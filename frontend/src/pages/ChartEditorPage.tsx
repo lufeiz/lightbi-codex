@@ -21,6 +21,8 @@ export function ChartEditorPage() {
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [configCollapsed, setConfigCollapsed] = useState(false);
+  const [dataSourceCollapsed, setDataSourceCollapsed] = useState(false);
   const user = useAuthStore((state) => state.user);
   const canWrite = user?.role === 'admin' || user?.role === 'editor';
   const meta = useDesignerStore((state) => state.meta);
@@ -200,14 +202,21 @@ export function ChartEditorPage() {
       </header>
       <DashboardFilterBar />
 
-      <div className="editor-layout">
-        <aside className="chart-type-sidebar" aria-label="新增图表类型">
-          <Typography.Text className="chart-type-sidebar-title">新增图表</Typography.Text>
+      <div
+        className={[
+          'editor-layout',
+          configCollapsed ? 'editor-layout-config-collapsed' : '',
+          dataSourceCollapsed ? 'editor-layout-data-collapsed' : ''
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <aside className="chart-type-sidebar" aria-label="图表组件区">
           <Space direction="vertical" size={14} className="chart-type-sidebar-body">
             {chartTypeGroups.map((group) => (
               <section key={group.key} className="chart-type-group">
                 <Typography.Title level={5}>{group.title}</Typography.Title>
-                <Space direction="vertical" className="full-width">
+                <div className="chart-type-button-grid">
                   {group.types.map((type) => (
                     <Button
                       key={type}
@@ -219,7 +228,7 @@ export function ChartEditorPage() {
                       {chartTypeLabels[type]}
                     </Button>
                   ))}
-                </Space>
+                </div>
               </section>
             ))}
           </Space>
@@ -229,7 +238,12 @@ export function ChartEditorPage() {
         </div>
 
         <aside className="inspector-panel">
-          <ChartConfigPanel />
+          <ChartConfigPanel
+            configCollapsed={configCollapsed}
+            dataSourceCollapsed={dataSourceCollapsed}
+            onConfigCollapsedChange={setConfigCollapsed}
+            onDataSourceCollapsedChange={setDataSourceCollapsed}
+          />
         </aside>
       </div>
     </div>

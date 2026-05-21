@@ -254,23 +254,51 @@ function applyDashboardFilters(widget: ChartWidget, filters?: DashboardFilters):
   }
 
   let nextRows = rows;
-  const widgetDimensionFilters = filters.chartDimensionFilters[widget.id] ?? [];
+  const widgetDimensionFilters = filters.dimensionControls.filter((control) => dimensionFilterAppliesToWidget(control, widget));
   widgetDimensionFilters.forEach((filter) => {
-    if (!filter.values.length || !hasField(nextRows, filter.field)) {
+    const field = resolveDimensionFilterField(widget, filter);
+    if (!field || !filter.values.length || !hasField(nextRows, field)) {
       return;
     }
     const allowedValues = new Set(filter.values);
-    nextRows = nextRows.filter((row) => allowedValues.has(String(row[filter.field] ?? '')));
+    nextRows = nextRows.filter((row) => allowedValues.has(String(row[field] ?? '')));
   });
 
-  if (filters.timeRange) {
+  if ((!filters.timeFilter.chartId || filters.timeFilter.chartId === widget.id) && filters.timeFilter.range) {
     const timeField = findTimeField(widget, nextRows);
     if (timeField) {
-      nextRows = nextRows.filter((row) => valueInTimeRange(row[timeField], filters.timeRange as [string, string]));
+      nextRows = nextRows.filter((row) => valueInTimeRange(row[timeField], filters.timeFilter.range as [string, string]));
     }
   }
 
   return nextRows;
+}
+
+function dimensionFilterAppliesToWidget(filter: DashboardFilters['dimensionControls'][number], widget: ChartWidget): boolean {
+  if (filter.chartIds?.length) {
+    return filter.chartIds.includes(widget.id);
+  }
+  if (filter.chartId) {
+    return filter.chartId === widget.id;
+  }
+  return Boolean(filter.field);
+}
+
+function resolveDimensionFilterField(widget: ChartWidget, filter: DashboardFilters['dimensionControls'][number]): string {
+  if (filter.fieldsByChart?.[widget.id]) {
+    return filter.fieldsByChart[widget.id];
+  }
+  if (filter.field && widget.config.dimensions.includes(filter.field)) {
+    return filter.field;
+  }
+
+  const label = filter.label.trim();
+  const matchedDimension = widget.config.dimensions.find((field) => {
+    const fieldLabel = displayFieldName(widget, field);
+    return !isTimeField(widget, field) && (fieldLabel === label || field === label);
+  });
+
+  return matchedDimension ?? '';
 }
 
 function hasField(rows: DataRow[], field: string): boolean {

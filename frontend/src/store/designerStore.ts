@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardFilters } from '@/types/domain';
+import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardDimensionFilter, DashboardFilters } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
 interface DesignerMeta {
@@ -39,8 +39,11 @@ const defaultMeta: DesignerMeta = {
 };
 
 const createDefaultFilters = (): DashboardFilters => ({
-  timeRange: null,
-  chartDimensionFilters: {}
+  timeFilter: {
+    label: '日期',
+    range: null
+  },
+  dimensionControls: [createDefaultDimensionControl()]
 });
 
 export const useDesignerStore = create<DesignerState>((set, get) => ({
@@ -171,9 +174,11 @@ function createWidget(type: ChartType, x: number, y: number): ChartWidget {
 }
 
 interface LegacyDashboardFilters extends Partial<DashboardFilters> {
+  timeRange?: [string, string] | null;
   dimensionField?: string;
   dimensionValues?: string[];
   dimensionFilters?: Array<{ field: string; values?: string[] }>;
+  chartDimensionFilters?: Record<string, Array<{ field: string; values?: string[] }>>;
 }
 
 function normalizeFilters(filters: LegacyDashboardFilters | undefined, widgets: ChartWidget[]): DashboardFilters {
@@ -181,49 +186,65 @@ function normalizeFilters(filters: LegacyDashboardFilters | undefined, widgets: 
     return createDefaultFilters();
   }
 
-  const chartDimensionFilters = normalizeChartDimensionFilters(filters.chartDimensionFilters);
-  const hasChartFilters = Object.keys(chartDimensionFilters).length > 0;
-
-  if (!hasChartFilters) {
-    const legacyFilters = normalizeLegacyDimensionFilters(filters);
-    const firstDataWidget = widgets.find((widget) => widget.type !== 'text');
-    if (firstDataWidget && legacyFilters.length) {
-      chartDimensionFilters[firstDataWidget.id] = legacyFilters;
-    }
-  }
+  const dimensionControls = normalizeDimensionControls(filters, widgets);
 
   return {
-    timeRange: Array.isArray(filters.timeRange) && filters.timeRange.length === 2 ? filters.timeRange : null,
-    chartDimensionFilters
+    timeFilter: {
+      label: filters.timeFilter?.label || '日期',
+      range: Array.isArray(filters.timeFilter?.range)
+        ? filters.timeFilter.range
+        : Array.isArray(filters.timeRange) && filters.timeRange.length === 2
+          ? filters.timeRange
+          : null
+    },
+    dimensionControls: dimensionControls.length ? dimensionControls : [createDefaultDimensionControl()]
   };
 }
 
-function normalizeChartDimensionFilters(filters?: Record<string, Array<{ field: string; values?: string[] }>>) {
-  if (!filters) {
-    return {};
+function normalizeDimensionControls(filters: LegacyDashboardFilters, widgets: ChartWidget[]): DashboardDimensionFilter[] {
+  if (Array.isArray(filters.dimensionControls) && filters.dimensionControls.length) {
+    return filters.dimensionControls
+      .filter((control) => typeof control.id === 'string' && control.id.length > 0)
+      .map((control) => ({
+        id: control.id,
+        label: control.label || '维度',
+        chartIds: Array.isArray(control.chartIds)
+          ? control.chartIds.map(String)
+          : control.chartId
+            ? [String(control.chartId)]
+            : [],
+        field: control.field,
+        fieldsByChart: control.fieldsByChart ?? {},
+        values: Array.isArray(control.values) ? control.values.map(String) : []
+      }));
   }
-  return Object.entries(filters).reduce<Record<string, Array<{ field: string; values: string[] }>>>((result, [widgetId, items]) => {
-    const nextItems = Array.isArray(items)
+
+  if (filters.chartDimensionFilters) {
+    return Object.values(filters.chartDimensionFilters).flatMap((items) =>
+      Array.isArray(items)
       ? items
           .filter((filter) => typeof filter.field === 'string' && filter.field.length > 0)
           .map((filter) => ({
+            id: createFilterId(),
+            label: '维度',
+            chartIds: [],
             field: filter.field,
+            fieldsByChart: {},
             values: Array.isArray(filter.values) ? filter.values.map(String) : []
           }))
-      : [];
-    if (nextItems.length) {
-      result[widgetId] = nextItems;
-    }
-    return result;
-  }, {});
-}
+      : []
+    );
+  }
 
-function normalizeLegacyDimensionFilters(filters: LegacyDashboardFilters) {
   if (Array.isArray(filters.dimensionFilters)) {
     return filters.dimensionFilters
       .filter((filter) => typeof filter.field === 'string' && filter.field.length > 0)
       .map((filter) => ({
+        id: createFilterId(),
+        label: '维度',
+        chartIds: [],
         field: filter.field,
+        fieldsByChart: {},
         values: Array.isArray(filter.values) ? filter.values.map(String) : []
       }));
   }
@@ -233,10 +254,29 @@ function normalizeLegacyDimensionFilters(filters: LegacyDashboardFilters) {
   }
   return [
     {
+      id: createFilterId(),
+      label: '维度',
+      chartIds: [],
       field: filters.dimensionField,
+      fieldsByChart: {},
       values: Array.isArray(filters.dimensionValues) ? filters.dimensionValues.map(String) : []
     }
   ];
+}
+
+function createDefaultDimensionControl(): DashboardDimensionFilter {
+  return {
+    id: createFilterId(),
+    label: '维度',
+    chartIds: [],
+    field: '',
+    fieldsByChart: {},
+    values: []
+  };
+}
+
+function createFilterId(): string {
+  return `filter-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 const WIDGET_GAP = 24;

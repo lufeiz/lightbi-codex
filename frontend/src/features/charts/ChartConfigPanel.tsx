@@ -1,4 +1,13 @@
-import { BoldOutlined, DatabaseOutlined, DragOutlined, FontColorsOutlined, ItalicOutlined, ReloadOutlined } from '@ant-design/icons';
+import {
+  BoldOutlined,
+  DatabaseOutlined,
+  DragOutlined,
+  FontColorsOutlined,
+  ItalicOutlined,
+  LeftOutlined,
+  ReloadOutlined,
+  RightOutlined
+} from '@ant-design/icons';
 import { Alert, Button, Form, Input, message, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -13,7 +22,19 @@ interface DatasetFieldSet {
   measures: DatasetField[];
 }
 
-export function ChartConfigPanel() {
+interface ChartConfigPanelProps {
+  configCollapsed: boolean;
+  dataSourceCollapsed: boolean;
+  onConfigCollapsedChange: (collapsed: boolean) => void;
+  onDataSourceCollapsedChange: (collapsed: boolean) => void;
+}
+
+export function ChartConfigPanel({
+  configCollapsed,
+  dataSourceCollapsed,
+  onConfigCollapsedChange,
+  onDataSourceCollapsedChange
+}: ChartConfigPanelProps) {
   const widgets = useDesignerStore((state) => state.widgets);
   const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
   const selectedWidget = widgets.find((widget) => widget.id === selectedWidgetId) ?? null;
@@ -26,14 +47,32 @@ export function ChartConfigPanel() {
     );
   }
 
-  return <SelectedChartConfigPanel selectedWidget={selectedWidget} />;
+  return (
+    <SelectedChartConfigPanel
+      selectedWidget={selectedWidget}
+      configCollapsed={configCollapsed}
+      dataSourceCollapsed={dataSourceCollapsed}
+      onConfigCollapsedChange={onConfigCollapsedChange}
+      onDataSourceCollapsedChange={onDataSourceCollapsedChange}
+    />
+  );
 }
 
 interface SelectedChartConfigPanelProps {
   selectedWidget: ChartWidget;
+  configCollapsed: boolean;
+  dataSourceCollapsed: boolean;
+  onConfigCollapsedChange: (collapsed: boolean) => void;
+  onDataSourceCollapsedChange: (collapsed: boolean) => void;
 }
 
-function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelProps) {
+function SelectedChartConfigPanel({
+  selectedWidget,
+  configCollapsed,
+  dataSourceCollapsed,
+  onConfigCollapsedChange,
+  onDataSourceCollapsedChange
+}: SelectedChartConfigPanelProps) {
   const [form] = Form.useForm<ChartConfig>();
   const updateWidgetConfig = useDesignerStore((state) => state.updateWidgetConfig);
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
@@ -212,122 +251,154 @@ function SelectedChartConfigPanel({ selectedWidget }: SelectedChartConfigPanelPr
   }
 
   return (
-    <div className="config-panel-shell">
-      <div className="config-form-module">
-        <Form<ChartConfig>
-          form={form}
-          className="render-config-form"
-          layout="vertical"
-          onValuesChange={(_, values) => updateWidgetConfig(selectedWidget.id, values)}
-        >
-          <Typography.Text className="selected-chart-type" type="secondary">
-            {chartTypeLabels[selectedWidget.type]}
-          </Typography.Text>
-          <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
-            <Input />
-          </Form.Item>
-          <section className="config-section">
-            <Typography.Text className="config-section-title">图表配置</Typography.Text>
-            <Form.Item label="维度">
-              <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('dimensions', event)}>
-                <Select
-                  mode="multiple"
-                  placeholder="双击或拖拽维度字段到这里"
-                  options={dimensionOptions}
-                  value={selectedWidget.config.dimensions ?? []}
-                  onChange={(fields) => changeFields('dimensions', fields)}
-                />
-              </div>
-            </Form.Item>
-            <Form.Item label="指标">
-              <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('measures', event)}>
-                <Select
-                  mode="multiple"
-                  placeholder="双击或拖拽指标字段到这里"
-                  options={measureOptions}
-                  value={selectedWidget.config.measures ?? []}
-                  onChange={(fields) => changeFields('measures', fields)}
-                />
-              </div>
-            </Form.Item>
-            <Form.Item name="labelField" label="标签字段">
-              <Input placeholder="销售额" />
-            </Form.Item>
-            <div className="config-switch-row">
-              <Form.Item name="showLabel" label="显示标签" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="showTooltip" label="显示 Tooltip" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-              <Form.Item name="showScrollbar" label="显示 Scrollbar" valuePropName="checked">
-                <Switch />
-              </Form.Item>
-            </div>
-          </section>
+    <div
+      className={[
+        'config-panel-shell',
+        configCollapsed ? 'config-panel-shell-config-collapsed' : '',
+        dataSourceCollapsed ? 'config-panel-shell-data-collapsed' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      <div className={`config-form-module drawer-module ${configCollapsed ? 'drawer-module-collapsed' : ''}`}>
+        <div className="drawer-module-header">
+          <Typography.Text className="drawer-module-title">图表配置</Typography.Text>
           <Button
-            block
-            type="primary"
-            icon={<ReloadOutlined />}
-            loading={updatingPreview}
-            disabled={!canUpdatePreview}
-            onClick={() => void updatePreviewData()}
+            aria-label={configCollapsed ? '展开图表配置' : '收起图表配置'}
+            icon={configCollapsed ? <RightOutlined /> : <LeftOutlined />}
+            size="small"
+            type="text"
+            onClick={() => onConfigCollapsedChange(!configCollapsed)}
+          />
+        </div>
+        {!configCollapsed && (
+          <Form<ChartConfig>
+            form={form}
+            className="render-config-form drawer-module-body"
+            layout="vertical"
+            onValuesChange={(_, values) => updateWidgetConfig(selectedWidget.id, values)}
           >
-            更新图表
-          </Button>
-          {selectedWidget.config.previewRows?.length ? (
-            <Typography.Text className="preview-data-status" type="secondary">
-              已加载 {selectedWidget.config.previewRows.length} 条数据
+            <Typography.Text className="selected-chart-type" type="secondary">
+              {chartTypeLabels[selectedWidget.type]}
             </Typography.Text>
-          ) : null}
-        </Form>
+            <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
+              <Input />
+            </Form.Item>
+            <section className="config-section">
+              <Form.Item label="维度">
+                <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('dimensions', event)}>
+                  <Select
+                    mode="multiple"
+                    placeholder="双击或拖拽维度字段到这里"
+                    options={dimensionOptions}
+                    value={selectedWidget.config.dimensions ?? []}
+                    onChange={(fields) => changeFields('dimensions', fields)}
+                  />
+                </div>
+              </Form.Item>
+              <Form.Item label="指标">
+                <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('measures', event)}>
+                  <Select
+                    mode="multiple"
+                    placeholder="双击或拖拽指标字段到这里"
+                    options={measureOptions}
+                    value={selectedWidget.config.measures ?? []}
+                    onChange={(fields) => changeFields('measures', fields)}
+                  />
+                </div>
+              </Form.Item>
+              <Form.Item name="labelField" label="标签字段">
+                <Input placeholder="销售额" />
+              </Form.Item>
+              <div className="config-switch-row">
+                <Form.Item name="showLabel" label="显示标签" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+                <Form.Item name="showTooltip" label="显示 Tooltip" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+                <Form.Item name="showScrollbar" label="显示 Scrollbar" valuePropName="checked">
+                  <Switch />
+                </Form.Item>
+              </div>
+            </section>
+            <Button
+              block
+              type="primary"
+              icon={<ReloadOutlined />}
+              loading={updatingPreview}
+              disabled={!canUpdatePreview}
+              onClick={() => void updatePreviewData()}
+            >
+              更新图表
+            </Button>
+            {selectedWidget.config.previewRows?.length ? (
+              <Typography.Text className="preview-data-status" type="secondary">
+                已加载 {selectedWidget.config.previewRows.length} 条数据
+              </Typography.Text>
+            ) : null}
+          </Form>
+        )}
       </div>
       <div className="config-module-divider" />
-      <aside className="data-source-module">
-        <Typography.Text className="config-section-title">数据源配置</Typography.Text>
-        <Typography.Text className="data-source-field-label" type="secondary">
-          数据源类型
-        </Typography.Text>
-        <Select
-          allowClear
-          value={selectedWidget.config.datasetType}
-          placeholder="先选类型"
-          options={[
-            { value: 'standard', label: datasetTypeLabels.standard },
-            { value: 'direct', label: datasetTypeLabels.direct }
-          ]}
-          onChange={changeDatasetType}
-        />
-        <Typography.Text className="data-source-field-label" type="secondary">
-          数据集
-        </Typography.Text>
-        <Select
-          allowClear
-          showSearch
-          disabled={!selectedWidget.config.datasetType}
-          value={selectedWidget.config.datasetId}
-          placeholder="选择数据集"
-          optionFilterProp="label"
-          options={datasets.map((dataset) => ({
-            value: dataset.id,
-            label: `${dataset.name} · ${dataset.sourceName}`
-          }))}
-          onChange={changeDataset}
-        />
-        {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
-        {datasetFields && (
-          <div className="field-pool data-source-field-pool">
-            <div className="field-pool-header">
-              <DatabaseOutlined />
-              <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
-            </div>
-            <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
-            <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
+      <aside className={`data-source-module drawer-module ${dataSourceCollapsed ? 'drawer-module-collapsed' : ''}`}>
+        <div className="drawer-module-header">
+          <Typography.Text className="drawer-module-title">数据源配置</Typography.Text>
+          <Button
+            aria-label={dataSourceCollapsed ? '展开数据源配置' : '收起数据源配置'}
+            icon={dataSourceCollapsed ? <LeftOutlined /> : <RightOutlined />}
+            size="small"
+            type="text"
+            onClick={() => onDataSourceCollapsedChange(!dataSourceCollapsed)}
+          />
+        </div>
+        {!dataSourceCollapsed && (
+          <div className="drawer-module-body data-source-body">
+            <Typography.Text className="data-source-field-label" type="secondary">
+              数据源类型
+            </Typography.Text>
+            <Select
+              allowClear
+              value={selectedWidget.config.datasetType}
+              placeholder="先选类型"
+              options={[
+                { value: 'standard', label: datasetTypeLabels.standard },
+                { value: 'direct', label: datasetTypeLabels.direct }
+              ]}
+              onChange={changeDatasetType}
+            />
+            <Typography.Text className="data-source-field-label" type="secondary">
+              数据集
+            </Typography.Text>
+            <Select
+              allowClear
+              showSearch
+              disabled={!selectedWidget.config.datasetType}
+              value={selectedWidget.config.datasetId}
+              placeholder="选择数据集"
+              optionFilterProp="label"
+              options={datasets.map((dataset) => ({
+                value: dataset.id,
+                label: `${dataset.name} · ${dataset.sourceName}`
+              }))}
+              onChange={changeDataset}
+            />
+            {datasetError && <Alert className="inline-alert" type="error" showIcon message={datasetError} />}
+            {datasetFields && (
+              <div className="field-pool data-source-field-pool">
+                <div className="field-pool-header">
+                  <DatabaseOutlined />
+                  <span>{selectedWidget.config.datasetName ?? '已选择数据集'}</span>
+                </div>
+                <FieldList title="维度字段" role="dimensions" fields={datasetFields.dimensions} onPick={addField} />
+                <FieldList title="指标字段" role="measures" fields={datasetFields.measures} onPick={addField} />
+              </div>
+            )}
+            <Typography.Text className="data-source-help" type="secondary">
+              当前选择仅作用于选中的图表
+            </Typography.Text>
           </div>
         )}
-        <Typography.Text className="data-source-help" type="secondary">
-          当前选择仅作用于选中的图表
-        </Typography.Text>
       </aside>
     </div>
   );
