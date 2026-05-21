@@ -15,6 +15,7 @@ const TEXT_MIN_HEIGHT = 120;
 export function DesignerCanvas() {
   const x6Ref = useRef<HTMLDivElement | null>(null);
   const widgets = useDesignerStore((state) => state.widgets);
+  const runtimeRows = useDesignerStore((state) => state.runtimeRows);
   const filters = useDesignerStore((state) => state.filters);
   const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
   const selectWidget = useDesignerStore((state) => state.selectWidget);
@@ -112,7 +113,7 @@ export function DesignerCanvas() {
             style={{ left: widget.x, top: widget.y, width: widget.width, height: widget.height }}
             onPointerDown={(event) => startDrag(event, widget)}
           >
-            <ChartRenderer widget={widget} filters={filters} />
+            <ChartRenderer widget={widget} rows={runtimeRows[widget.id]} filters={filters} />
             <div className="resize-handle" onPointerDown={(event) => startResize(event, widget)} />
           </div>
         ))}

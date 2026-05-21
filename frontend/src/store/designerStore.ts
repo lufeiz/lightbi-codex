@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardDimensionFilter, DashboardFilters } from '@/types/domain';
+import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardDimensionFilter, DashboardFilters, DataRow } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
 interface DesignerMeta {
@@ -15,6 +15,7 @@ interface DesignerMeta {
 interface DesignerState {
   meta: DesignerMeta;
   widgets: ChartWidget[];
+  runtimeRows: Record<string, DataRow[]>;
   filters: DashboardFilters;
   selectedWidgetId: string | null;
   reset: () => void;
@@ -28,6 +29,7 @@ interface DesignerState {
   syncPrimaryTitle: (title: string) => void;
   updateWidget: (id: string, patch: Partial<ChartWidget>) => void;
   updateWidgetConfig: (id: string, patch: Partial<ChartWidget['config']>) => void;
+  setWidgetRows: (id: string, rows: DataRow[]) => void;
   toPayload: () => ChartMutationPayload;
 }
 
@@ -51,10 +53,11 @@ const createDefaultFilters = (): DashboardFilters => ({
 export const useDesignerStore = create<DesignerState>((set, get) => ({
   meta: defaultMeta,
   widgets: [],
+  runtimeRows: {},
   filters: createDefaultFilters(),
   selectedWidgetId: null,
   reset() {
-    set({ meta: defaultMeta, widgets: [], filters: createDefaultFilters(), selectedWidgetId: null });
+    set({ meta: defaultMeta, widgets: [], runtimeRows: {}, filters: createDefaultFilters(), selectedWidgetId: null });
   },
   load(payload) {
     const widgets = payload.config?.widgets?.length ? payload.config.widgets : [];
@@ -69,6 +72,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
         tagIds: payload.tagIds ?? []
       },
       widgets,
+      runtimeRows: Object.fromEntries(widgets.map((widget) => [widget.id, widget.config.previewRows ?? []])),
       filters: normalizeFilters(payload.config?.filters, widgets),
       selectedWidgetId: widgets[0]?.id ?? null
     });
@@ -146,6 +150,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       )
     }));
   },
+  setWidgetRows(id, rows) {
+    set((state) => ({ runtimeRows: { ...state.runtimeRows, [id]: rows } }));
+  },
   toPayload() {
     const state = get();
     const primary = state.widgets[0];
@@ -157,8 +164,8 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       tagIds: state.meta.tagIds,
       type: primary?.type ?? 'line',
       config: {
-        version: 1,
-        widgets: state.widgets,
+        version: 2,
+        widgets: state.widgets.map(stripRuntimeConfig),
         filters: state.filters
       }
     };
@@ -184,11 +191,17 @@ function createWidget(type: ChartType, x: number, y: number): ChartWidget {
       showScrollbar: isTable,
       dimensions: [],
       measures: [],
+      query: { dimensions: [], metrics: [], filters: [], sorts: [], limit: 500, timeComparison: 'none' },
       labelField: '销售额',
       textContent: isText ? '输入文本内容' : undefined,
       textHtml: isText ? '输入文本内容' : undefined
     }
   };
+}
+
+function stripRuntimeConfig(widget: ChartWidget): ChartWidget {
+  const { previewRows: _previewRows, ...config } = widget.config;
+  return { ...widget, config };
 }
 
 interface LegacyDashboardFilters extends Partial<DashboardFilters> {

@@ -29,11 +29,44 @@ type DatasetType string
 const (
 	DatasetTypeStandard DatasetType = "standard"
 	DatasetTypeDirect   DatasetType = "direct"
+	DatasetTypeSQL      DatasetType = "sql"
 )
 
 func ValidDatasetType(datasetType DatasetType) bool {
 	switch datasetType {
-	case DatasetTypeStandard, DatasetTypeDirect:
+	case DatasetTypeStandard, DatasetTypeDirect, DatasetTypeSQL:
+		return true
+	default:
+		return false
+	}
+}
+
+type DataSourceType string
+
+const (
+	DataSourceTypeMySQL    DataSourceType = "mysql"
+	DataSourceTypePostgres DataSourceType = "postgres"
+)
+
+func ValidDataSourceType(dataSourceType DataSourceType) bool {
+	switch dataSourceType {
+	case DataSourceTypeMySQL, DataSourceTypePostgres:
+		return true
+	default:
+		return false
+	}
+}
+
+type DataSourceStatus string
+
+const (
+	DataSourceStatusActive   DataSourceStatus = "active"
+	DataSourceStatusDisabled DataSourceStatus = "disabled"
+)
+
+func ValidDataSourceStatus(status DataSourceStatus) bool {
+	switch status {
+	case DataSourceStatusActive, DataSourceStatusDisabled:
 		return true
 	default:
 		return false

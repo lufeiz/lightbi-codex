@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 )
 
 type Config struct {
+	AppEnv            string
 	AppAddr           string
 	MySQLDSN          string
 	JWTAccessSecret   string
@@ -19,12 +22,20 @@ type Config struct {
 	CORSOrigins       []string
 	CookieSecure      bool
 	SeedAdminPassword string
+	RunAutoMigrate    bool
+	RunSeedDefaults   bool
+	RegisterMode      string
+	RegisterCode      string
+	DataSourceKey     string
+	QueryScheduler    bool
 }
 
 func Load() Config {
 	_ = godotenv.Load()
+	appEnv := env("APP_ENV", "development")
 
 	return Config{
+		AppEnv:            appEnv,
 		AppAddr:           env("APP_ADDR", ":8080"),
 		MySQLDSN:          env("MYSQL_DSN", "lightbi:lightbi@tcp(127.0.0.1:3306)/lightbi?charset=utf8mb4&parseTime=True&loc=Local"),
 		JWTAccessSecret:   env("JWT_ACCESS_SECRET", "change-me-access-secret"),
@@ -34,6 +45,67 @@ func Load() Config {
 		CORSOrigins:       envList("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
 		CookieSecure:      envBool("COOKIE_SECURE", false),
 		SeedAdminPassword: env("SEED_ADMIN_PASSWORD", "LightBI@123456"),
+		RunAutoMigrate:    envBool("RUN_AUTO_MIGRATE", false),
+		RunSeedDefaults:   envBool("RUN_SEED_DEFAULTS", false),
+		RegisterMode:      env("REGISTER_MODE", "disabled"),
+		RegisterCode:      env("REGISTER_CODE", ""),
+		DataSourceKey:     env("DATA_SOURCE_CREDENTIAL_KEY", "dev-only-change-me-data-source-key"),
+		QueryScheduler:    envBool("DATASET_QUERY_SCHEDULER", false),
+	}
+}
+
+func (cfg Config) IsProduction() bool {
+	return strings.EqualFold(cfg.AppEnv, "production") || strings.EqualFold(cfg.AppEnv, "prod")
+}
+
+func (cfg Config) Validate() error {
+	if cfg.AccessTTL <= 0 || cfg.RefreshTTL <= 0 {
+		return errors.New("JWT token TTL must be positive")
+	}
+	if !validRegisterMode(cfg.RegisterMode) {
+		return fmt.Errorf("REGISTER_MODE must be one of disabled, public, invite")
+	}
+	if cfg.RegisterMode == "invite" && strings.TrimSpace(cfg.RegisterCode) == "" {
+		return errors.New("REGISTER_CODE is required when REGISTER_MODE=invite")
+	}
+	if strings.TrimSpace(cfg.DataSourceKey) == "" {
+		return errors.New("DATA_SOURCE_CREDENTIAL_KEY is required")
+	}
+	if !cfg.IsProduction() {
+		return nil
+	}
+
+	var problems []string
+	if cfg.JWTAccessSecret == "change-me-access-secret" {
+		problems = append(problems, "JWT_ACCESS_SECRET uses the default value")
+	}
+	if cfg.JWTRefreshSecret == "change-me-refresh-secret" {
+		problems = append(problems, "JWT_REFRESH_SECRET uses the default value")
+	}
+	if cfg.MySQLDSN == "lightbi:lightbi@tcp(127.0.0.1:3306)/lightbi?charset=utf8mb4&parseTime=True&loc=Local" {
+		problems = append(problems, "MYSQL_DSN uses the default value")
+	}
+	if cfg.SeedAdminPassword == "LightBI@123456" {
+		problems = append(problems, "SEED_ADMIN_PASSWORD uses the default value")
+	}
+	if cfg.DataSourceKey == "dev-only-change-me-data-source-key" {
+		problems = append(problems, "DATA_SOURCE_CREDENTIAL_KEY uses the development default value")
+	}
+	if cfg.RunSeedDefaults {
+		problems = append(problems, "RUN_SEED_DEFAULTS must be false in production")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("unsafe production configuration: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+func validRegisterMode(mode string) bool {
+	switch mode {
+	case "disabled", "public", "invite":
+		return true
+	default:
+		return false
 	}
 }
 

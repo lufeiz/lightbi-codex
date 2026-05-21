@@ -33,7 +33,7 @@ type registerRequest struct {
 	Account     string `json:"account" binding:"required"`
 	DisplayName string `json:"displayName" binding:"required"`
 	Password    string `json:"password" binding:"required"`
-	Code        string `json:"code" binding:"required"`
+	Code        string `json:"code"`
 }
 
 type authResponse struct {
@@ -91,8 +91,12 @@ func (h AuthHandler) Register(c *gin.Context) {
 	}
 	req.Account = strings.TrimSpace(req.Account)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
-	if req.Code != "123456" {
-		Fail(c, http.StatusBadRequest, "invalid verification code")
+	if h.Config.RegisterMode == "disabled" {
+		Fail(c, http.StatusForbidden, "registration is disabled")
+		return
+	}
+	if h.Config.RegisterMode == "invite" && strings.TrimSpace(req.Code) != h.Config.RegisterCode {
+		Fail(c, http.StatusBadRequest, "invalid invitation code")
 		return
 	}
 	if len(req.Password) < 8 {
@@ -137,7 +141,7 @@ func (h AuthHandler) Register(c *gin.Context) {
 		Username:     h.uniqueUsername(req.Account),
 		DisplayName:  req.DisplayName,
 		PasswordHash: passwordHash,
-		Role:         models.RoleEditor,
+		Role:         models.RoleViewer,
 		Status:       models.UserStatusActive,
 	}
 	if req.AccountType == "email" {

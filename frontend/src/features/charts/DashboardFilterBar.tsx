@@ -38,12 +38,13 @@ const defaultFieldLabels: Record<string, string> = {
 
 export function DashboardFilterBar() {
   const widgets = useDesignerStore((state) => state.widgets);
+  const runtimeRows = useDesignerStore((state) => state.runtimeRows);
   const filters = useDesignerStore((state) => state.filters);
   const setFilters = useDesignerStore((state) => state.setFilters);
   const chartOptions = useMemo(() => buildChartOptions(widgets), [widgets]);
   const normalizedControls = useMemo(
-    () => normalizeDimensionControls(filters.dimensionControls, widgets),
-    [filters.dimensionControls, widgets]
+    () => normalizeDimensionControls(filters.dimensionControls, widgets, runtimeRows),
+    [filters.dimensionControls, runtimeRows, widgets]
   );
   const [dimensionDraft, setDimensionDraft] = useState<DimensionDraft | null>(null);
   const timeEnabled = Boolean(filters.timeFilter.enabled || filters.timeFilter.range);
@@ -99,7 +100,7 @@ export function DashboardFilterBar() {
   const updateDimensionValues = (id: string, values: string[]) => {
     setFilters({
       dimensionControls: normalizedControls.map((control) =>
-        control.id === id ? normalizeDimensionControl({ ...control, values }, widgets) : control
+        control.id === id ? normalizeDimensionControl({ ...control, values }, widgets, runtimeRows) : control
       )
     });
   };
@@ -123,7 +124,8 @@ export function DashboardFilterBar() {
         fieldsByChart: existingControl?.fieldsByChart ?? {},
         values: existingControl?.values ?? []
       },
-      widgets
+      widgets,
+      runtimeRows
     );
     const nextControls = existingControl
       ? normalizedControls.map((control) => (control.id === existingControl.id ? nextControl : control))
@@ -190,7 +192,7 @@ export function DashboardFilterBar() {
             </div>
             <div className="dimension-control-list">
               {normalizedControls.map((control) => {
-                const valueOptions = buildDimensionValueOptions(widgets, control);
+                const valueOptions = buildDimensionValueOptions(widgets, runtimeRows, control);
                 return (
                   <div key={control.id} className="dimension-control-row">
                     <Input
@@ -267,16 +269,16 @@ export function DashboardFilterBar() {
   );
 }
 
-function normalizeDimensionControls(controls: DashboardDimensionFilter[], widgets: ChartWidget[]): DashboardDimensionFilter[] {
-  return controls.map((control) => normalizeDimensionControl(control, widgets));
+function normalizeDimensionControls(controls: DashboardDimensionFilter[], widgets: ChartWidget[], runtimeRows: Record<string, unknown[]>): DashboardDimensionFilter[] {
+  return controls.map((control) => normalizeDimensionControl(control, widgets, runtimeRows));
 }
 
-function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: ChartWidget[]): DashboardDimensionFilter {
+function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: ChartWidget[], runtimeRows: Record<string, unknown[]>): DashboardDimensionFilter {
   const label = control.label || '维度';
   const chartIds = normalizeChartIds(control, widgets);
   const fieldsByChart = buildFieldsByChart(widgets, label, chartIds, control.fieldsByChart, control.field);
   const field = Object.values(fieldsByChart)[0] ?? control.field ?? '';
-  const valueOptions = buildDimensionValueOptions(widgets, { ...control, label, chartIds, field, fieldsByChart, values: [] });
+  const valueOptions = buildDimensionValueOptions(widgets, runtimeRows, { ...control, label, chartIds, field, fieldsByChart, values: [] });
   const validValues = new Set(valueOptions.map((option) => option.value));
 
   return {
@@ -312,7 +314,7 @@ function buildChartOptions(widgets: ChartWidget[]): ChartOption[] {
     }));
 }
 
-function buildDimensionValueOptions(widgets: ChartWidget[], control: DashboardDimensionFilter): ChartOption[] {
+function buildDimensionValueOptions(widgets: ChartWidget[], runtimeRows: Record<string, unknown[]>, control: DashboardDimensionFilter): ChartOption[] {
   const valueSet = new Set<string>();
   const targetChartIds = control.chartIds?.length ? control.chartIds : [];
 
@@ -325,7 +327,8 @@ function buildDimensionValueOptions(widgets: ChartWidget[], control: DashboardDi
     if (!field) {
       return;
     }
-    widget.config.previewRows?.forEach((row) => {
+    const rows = (runtimeRows[chartId] as Record<string, string | number | null>[] | undefined) ?? widget.config.previewRows ?? [];
+    rows.forEach((row) => {
       const value = row[field];
       if (value !== null && value !== undefined) {
         valueSet.add(String(value));

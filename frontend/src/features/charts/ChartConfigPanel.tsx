@@ -8,6 +8,7 @@ import {
   RightOutlined
 } from '@ant-design/icons';
 import { Alert, Button, Form, Input, message, Select, Switch, Tag, Tooltip, Typography } from 'antd';
+import DOMPurify from 'dompurify';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
 
@@ -15,7 +16,7 @@ import { api } from '@/api/client';
 import dimensionFieldIcon from '@/assets/dimension-field-icon.svg';
 import measureFieldIcon from '@/assets/measure-field-icon.svg';
 import { useDesignerStore } from '@/store/designerStore';
-import type { ChartConfig, ChartWidget, DatasetField, DatasetSummary, DatasetType } from '@/types/domain';
+import type { ChartConfig, ChartWidget, DatasetField, DatasetQueryConfig, DatasetSummary, DatasetType } from '@/types/domain';
 import { chartTypeLabels, datasetTypeLabels } from '@/types/domain';
 
 interface DatasetFieldSet {
@@ -80,6 +81,8 @@ function SelectedChartConfigPanel({
   const [datasetFields, setDatasetFields] = useState<DatasetFieldSet | null>(null);
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [updatingPreview, setUpdatingPreview] = useState(false);
+  const runtimeRows = useDesignerStore((state) => state.runtimeRows[selectedWidget.id] ?? []);
+  const setWidgetRows = useDesignerStore((state) => state.setWidgetRows);
   const isTextWidget = selectedWidget.type === 'text' || selectedWidget.type === 'richText';
 
   useEffect(() => {
@@ -169,7 +172,8 @@ function SelectedChartConfigPanel({
   const changeFields = (target: 'dimensions' | 'measures', fields: string[]) => {
     const next = Array.from(new Set(fields));
     form.setFieldValue(target, next);
-    updateWidgetConfig(selectedWidget.id, { [target]: next });
+    const nextQuery = buildQueryConfig({ ...selectedWidget.config, [target]: next });
+    updateWidgetConfig(selectedWidget.id, { [target]: next, query: nextQuery });
   };
 
   const handleDrop = (target: 'dimensions' | 'measures', event: DragEvent<HTMLDivElement>) => {
@@ -197,8 +201,10 @@ function SelectedChartConfigPanel({
     }
     setUpdatingPreview(true);
     try {
-      const rows = await api.datasetRows(datasetId);
-      updateWidgetConfig(selectedWidget.id, { previewRows: rows });
+      const query = buildQueryConfig(selectedWidget.config);
+      const result = await api.queryDataset(datasetId, query);
+      setWidgetRows(selectedWidget.id, result.rows);
+      updateWidgetConfig(selectedWidget.id, { query });
       message.success('图表数据已更新');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '更新图表数据失败');
@@ -214,7 +220,7 @@ function SelectedChartConfigPanel({
       datasetName: undefined,
       dimensions: [],
       measures: [],
-      previewRows: [],
+      query: { dimensions: [], metrics: [], filters: [], sorts: [], limit: 500, timeComparison: 'none' },
       fieldLabels: {}
     });
     updateWidgetConfig(selectedWidget.id, {
@@ -223,15 +229,18 @@ function SelectedChartConfigPanel({
       datasetName: undefined,
       dimensions: [],
       measures: [],
-      previewRows: [],
+      query: { dimensions: [], metrics: [], filters: [], sorts: [], limit: 500, timeComparison: 'none' },
       fieldLabels: {}
     });
+    setWidgetRows(selectedWidget.id, []);
   };
 
   const changeDataset = (datasetId?: number) => {
     const datasetName = datasets.find((item) => item.id === datasetId)?.name;
-    form.setFieldsValue({ datasetId, datasetName, dimensions: [], measures: [], previewRows: [], fieldLabels: {} });
-    updateWidgetConfig(selectedWidget.id, { datasetId, datasetName, dimensions: [], measures: [], previewRows: [], fieldLabels: {} });
+    const emptyQuery = { dimensions: [], metrics: [], filters: [], sorts: [], limit: 500, timeComparison: 'none' as const };
+    form.setFieldsValue({ datasetId, datasetName, dimensions: [], measures: [], query: emptyQuery, fieldLabels: {} });
+    updateWidgetConfig(selectedWidget.id, { datasetId, datasetName, dimensions: [], measures: [], query: emptyQuery, fieldLabels: {} });
+    setWidgetRows(selectedWidget.id, []);
   };
 
   const canUpdatePreview = Boolean(
@@ -336,9 +345,9 @@ function SelectedChartConfigPanel({
             >
               更新图表
             </Button>
-            {selectedWidget.config.previewRows?.length ? (
+            {runtimeRows.length ? (
               <Typography.Text className="preview-data-status" type="secondary">
-                已加载 {selectedWidget.config.previewRows.length} 条数据
+                已加载 {runtimeRows.length} 条数据
               </Typography.Text>
             ) : null}
           </Form>
@@ -441,7 +450,7 @@ function RichTextConfigPanel({ selectedWidget, onConfigChange }: RichTextConfigP
     if (!editorRef.current) {
       return;
     }
-    editorRef.current.innerHTML = selectedWidget.config.textHtml || escapeHtml(selectedWidget.config.textContent || '输入文本内容');
+    editorRef.current.innerHTML = DOMPurify.sanitize(selectedWidget.config.textHtml || escapeHtml(selectedWidget.config.textContent || '输入文本内容'));
     selectionRef.current = null;
   }, [selectedWidget.id]);
 
@@ -476,7 +485,7 @@ function RichTextConfigPanel({ selectedWidget, onConfigChange }: RichTextConfigP
       return;
     }
     onConfigChange({
-      textHtml: editor.innerHTML,
+      textHtml: DOMPurify.sanitize(editor.innerHTML),
       textContent: editor.innerText
     });
     saveSelection();
@@ -551,6 +560,22 @@ function buildFieldLabels(fields: DatasetFieldSet): Record<string, string> {
     labels[field.name] = field.label;
     return labels;
   }, {});
+}
+
+function buildQueryConfig(config: ChartConfig): DatasetQueryConfig {
+  return {
+    dimensions: config.dimensions ?? [],
+    metrics: (config.measures ?? []).map((field) => ({
+      field,
+      aggregation: 'sum',
+      alias: field
+    })),
+    filters: config.query?.filters ?? [],
+    sorts: config.query?.sorts ?? [],
+    topN: config.query?.topN,
+    limit: config.query?.limit ?? 500,
+    timeComparison: config.query?.timeComparison ?? 'none'
+  };
 }
 
 interface FieldListProps {

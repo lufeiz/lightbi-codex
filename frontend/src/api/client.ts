@@ -6,8 +6,13 @@ import type {
   ChartMutationPayload,
   ChartQuery,
   ChartTag,
+  DataSourceMutationPayload,
+  DataSourceSummary,
   DatasetDetail,
   DatasetField,
+  DatasetMutationPayload,
+  DatasetQueryRequest,
+  DatasetQueryResponse,
   DatasetSummary,
   DatasetType,
   LoginPayload,
@@ -22,18 +27,12 @@ interface APIEnvelope<T> {
 }
 
 const API_BASE_URL = process.env.API_BASE_URL ?? '/api';
-const ACCESS_TOKEN_KEY = 'lightbi.accessToken';
 
-let memoryAccessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+let memoryAccessToken: string | null = null;
 let refreshPromise: Promise<AuthResponse> | null = null;
 
 export function setApiAccessToken(token: string | null): void {
   memoryAccessToken = token;
-  if (token) {
-    localStorage.setItem(ACCESS_TOKEN_KEY, token);
-  } else {
-    localStorage.removeItem(ACCESS_TOKEN_KEY);
-  }
 }
 
 export function getApiAccessToken(): string | null {
@@ -69,7 +68,7 @@ async function request<T>(path: string, init: RequestInit = {}, retry = true): P
   return payload.data;
 }
 
-async function refreshAccessToken(): Promise<boolean> {
+export async function refreshAccessToken(): Promise<boolean> {
   if (!refreshPromise) {
     refreshPromise = request<AuthResponse>('/auth/refresh', { method: 'POST' }, false).finally(() => {
       refreshPromise = null;
@@ -124,6 +123,9 @@ export const api = {
   },
   users() {
     return request<UserDTO[]>('/users');
+  },
+  chartCreators() {
+    return request<UserDTO[]>('/charts/creators');
   },
   charts(query: ChartQuery) {
     return request<ChartListResponse>(`/charts${toQuery(query)}`);
@@ -191,16 +193,67 @@ export const api = {
   deleteTag(id: number) {
     return request<{ deleted: boolean }>(`/chart-tags/${id}`, { method: 'DELETE' });
   },
+  dataSources() {
+    return request<DataSourceSummary[]>('/data-sources');
+  },
+  createDataSource(payload: DataSourceMutationPayload) {
+    return request<DataSourceSummary>('/data-sources', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateDataSource(id: number, payload: DataSourceMutationPayload) {
+    return request<DataSourceSummary>(`/data-sources/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteDataSource(id: number) {
+    return request<{ deleted: boolean }>(`/data-sources/${id}`, { method: 'DELETE' });
+  },
+  testDataSource(id: number) {
+    return request<{ ok: boolean }>(`/data-sources/${id}/test`, { method: 'POST' });
+  },
   datasets(type?: DatasetType) {
     return request<DatasetSummary[]>(`/datasets${toQuery({ type })}`);
   },
   dataset(id: number) {
     return request<DatasetDetail>(`/datasets/${id}`);
   },
+  createDataset(payload: DatasetMutationPayload) {
+    return request<DatasetSummary>('/datasets', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  updateDataset(id: number, payload: DatasetMutationPayload) {
+    return request<DatasetSummary>(`/datasets/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  },
+  deleteDataset(id: number) {
+    return request<{ deleted: boolean }>(`/datasets/${id}`, { method: 'DELETE' });
+  },
   datasetFields(id: number) {
     return request<{ dimensions: DatasetField[]; measures: DatasetField[] }>(`/datasets/${id}/fields`);
   },
   datasetRows(id: number) {
-    return request<DatasetDetail['rows']>(`/datasets/${id}/rows`);
+    return request<NonNullable<DatasetDetail['rows']>>(`/datasets/${id}/rows`);
+  },
+  previewDataset(id: number, payload: DatasetQueryRequest) {
+    return request<DatasetQueryResponse>(`/datasets/${id}/preview`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  queryDataset(id: number, payload: DatasetQueryRequest) {
+    return request<DatasetQueryResponse>(`/datasets/${id}/query`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  },
+  refreshDataset(id: number) {
+    return request<{ refreshed: boolean }>(`/datasets/${id}/refresh`, { method: 'POST' });
   }
 };

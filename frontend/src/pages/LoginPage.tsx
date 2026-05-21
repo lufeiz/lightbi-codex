@@ -1,5 +1,5 @@
 import { LockOutlined, MailOutlined, MobileOutlined, SafetyOutlined, UserOutlined } from '@ant-design/icons';
-import { Alert, Button, Card, Form, Input, Radio, Space, Tabs, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, Radio, Tabs, Typography } from 'antd';
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 
@@ -71,22 +71,17 @@ export function LoginPage() {
               children: (
                 <>
                   <Typography.Title level={3}>进入工作台</Typography.Title>
-                  <Typography.Text type="secondary">可用账号：admin / editor / viewer，密码均为 LightBI@123456</Typography.Text>
-                  <Form<LoginPayload> layout="vertical" onFinish={handleFinish} initialValues={{ username: 'admin' }}>
+                  <Typography.Text type="secondary">使用管理员分配的账号登录。</Typography.Text>
+                  <Form<LoginPayload> layout="vertical" onFinish={handleFinish}>
                     <Form.Item name="username" label="账号 / 邮箱 / 手机号" rules={[{ required: true, message: '请输入账号' }]}>
-                      <Input prefix={<UserOutlined />} placeholder="admin" autoComplete="username" />
+                      <Input prefix={<UserOutlined />} placeholder="账号 / 邮箱 / 手机号" autoComplete="username" />
                     </Form.Item>
                     <Form.Item name="password" label="密码" rules={[{ required: true, message: '请输入密码' }]}>
-                      <Input.Password prefix={<LockOutlined />} placeholder="LightBI@123456" autoComplete="current-password" />
+                      <Input.Password prefix={<LockOutlined />} placeholder="请输入密码" autoComplete="current-password" />
                     </Form.Item>
                     <Button type="primary" htmlType="submit" loading={submitting} block>
                       登录
                     </Button>
-                    <Space className="login-account-hints" wrap>
-                      <span>admin</span>
-                      <span>editor</span>
-                      <span>viewer</span>
-                    </Space>
                   </Form>
                 </>
               )
@@ -97,11 +92,11 @@ export function LoginPage() {
               children: (
                 <>
                   <Typography.Title level={3}>注册分析账号</Typography.Title>
-                  <Typography.Text type="secondary">验证码暂固定为 123456，后续可接入邮件或短信服务。</Typography.Text>
+                  <Typography.Text type="secondary">如已开启邀请注册，请输入管理员提供的邀请码。</Typography.Text>
                   <Form<RegisterPayload>
                     layout="vertical"
                     onFinish={handleRegister}
-                    initialValues={{ accountType: 'email', code: '123456' }}
+                    initialValues={{ accountType: 'email' }}
                   >
                     <Form.Item name="accountType" label="注册方式" rules={[{ required: true }]}>
                       <Radio.Group optionType="button" buttonStyle="solid">
@@ -137,7 +132,7 @@ export function LoginPage() {
                       <Input prefix={<UserOutlined />} placeholder="数据分析师" />
                     </Form.Item>
                     <Form.Item name="code" label="验证码" rules={[{ required: true, message: '请输入验证码' }]}>
-                      <Input prefix={<SafetyOutlined />} placeholder="123456" />
+                      <Input prefix={<SafetyOutlined />} placeholder="邀请码" />
                     </Form.Item>
                     <Form.Item name="password" label="密码" rules={[{ required: true, min: 8, message: '至少 8 位密码' }]}>
                       <Input.Password prefix={<LockOutlined />} placeholder="至少 8 位" autoComplete="new-password" />

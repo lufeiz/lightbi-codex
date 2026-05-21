@@ -1,4 +1,4 @@
-import { LogoutOutlined, PieChartOutlined, RocketOutlined, SaveOutlined } from '@ant-design/icons';
+import { DatabaseOutlined, LogoutOutlined, PieChartOutlined, RocketOutlined, SaveOutlined, TableOutlined } from '@ant-design/icons';
 import { Avatar, Button, Layout, Space, Typography } from 'antd';
 import { Link, Outlet, useNavigate } from 'react-router-dom';
 
@@ -25,6 +25,14 @@ export function AppShell() {
             <Link to="/charts" className="brand">
               <PieChartOutlined />
               <span>智能BI</span>
+            </Link>
+            <Link to="/data-sources" className="header-nav-link">
+              <DatabaseOutlined />
+              <span>数据源</span>
+            </Link>
+            <Link to="/datasets" className="header-nav-link">
+              <TableOutlined />
+              <span>数据集</span>
             </Link>
           </Space>
           <div className="app-header-actions">

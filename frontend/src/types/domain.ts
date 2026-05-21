@@ -30,7 +30,9 @@ export type ChartType =
   | 'text';
 
 export type ChartStatus = 'draft' | 'published' | 'archived';
-export type DatasetType = 'standard' | 'direct';
+export type DatasetType = 'standard' | 'direct' | 'sql';
+export type DataSourceType = 'mysql' | 'postgres';
+export type DataSourceStatus = 'active' | 'disabled';
 
 export interface DatasetField {
   name: string;
@@ -44,6 +46,11 @@ export interface DatasetSummary {
   type: DatasetType;
   description: string;
   sourceName: string;
+  dataSourceId?: number | null;
+  cacheTtl?: number;
+  refreshEvery?: number;
+  queryTimeout?: number;
+  rowLimit?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -51,10 +58,109 @@ export interface DatasetSummary {
 export interface DatasetDetail extends DatasetSummary {
   dimensions: DatasetField[];
   measures: DatasetField[];
-  rows: DataRow[];
+  fields?: DatasetField[];
+  querySql?: string;
+  rows?: DataRow[];
 }
 
 export type DataRow = Record<string, string | number | null>;
+
+export interface DataSourceSummary {
+  id: number;
+  name: string;
+  type: DataSourceType;
+  status: DataSourceStatus;
+  description: string;
+  host: string;
+  port: number;
+  databaseName: string;
+  username: string;
+  sslMode: string;
+  maxOpenConns: number;
+  maxIdleConns: number;
+  connMaxLifetimeSecs: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DataSourceMutationPayload {
+  name: string;
+  type: DataSourceType;
+  status: DataSourceStatus;
+  description: string;
+  host: string;
+  port: number;
+  databaseName: string;
+  username: string;
+  password?: string;
+  sslMode: string;
+  params?: Record<string, string>;
+  maxOpenConns: number;
+  maxIdleConns: number;
+  connMaxLifetimeSecs: number;
+}
+
+export interface DatasetMutationPayload {
+  name: string;
+  type: DatasetType;
+  description: string;
+  sourceName: string;
+  dataSourceId?: number | null;
+  querySql: string;
+  dimensions: DatasetField[];
+  measures: DatasetField[];
+  cacheTtl: number;
+  refreshEvery: number;
+  queryTimeout: number;
+  rowLimit: number;
+}
+
+export type MetricAggregation = 'sum' | 'avg' | 'count' | 'min' | 'max';
+
+export interface DatasetQueryMetric {
+  field: string;
+  aggregation: MetricAggregation;
+  alias?: string;
+}
+
+export interface QueryFilter {
+  field: string;
+  operator: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'in' | 'contains' | 'between';
+  value?: string | number | null;
+  values?: Array<string | number | null>;
+}
+
+export interface QuerySort {
+  field: string;
+  order: 'asc' | 'desc';
+}
+
+export interface DatasetQueryConfig {
+  dimensions: string[];
+  metrics: DatasetQueryMetric[];
+  filters?: QueryFilter[];
+  sorts?: QuerySort[];
+  topN?: number;
+  limit?: number;
+  timeComparison?: 'none' | 'yoy' | 'mom';
+}
+
+export interface DatasetQueryRequest extends DatasetQueryConfig {}
+
+export interface DatasetQueryColumn {
+  name: string;
+  label: string;
+  role: 'dimension' | 'measure';
+  type: string;
+}
+
+export interface DatasetQueryResponse {
+  columns: DatasetQueryColumn[];
+  rows: DataRow[];
+  cached: boolean;
+  executedAt: string;
+  expiresAt?: string;
+}
 
 export interface ChartTag {
   id: number;
@@ -91,7 +197,9 @@ export interface ChartConfig {
   datasetName?: string;
   dimensions: string[];
   measures: string[];
+  query?: DatasetQueryConfig;
   labelField?: string;
+  // Deprecated legacy snapshot. New saves strip this field before sending config to the backend.
   previewRows?: DataRow[];
   fieldLabels?: Record<string, string>;
   textContent?: string;
@@ -134,7 +242,7 @@ export interface DashboardDimensionFilter {
 }
 
 export interface ChartDocument {
-  version: 1;
+  version: 1 | 2;
   widgets: ChartWidget[];
   filters?: DashboardFilters;
 }
@@ -236,5 +344,16 @@ export const chartStatusLabels: Record<ChartStatus, string> = {
 
 export const datasetTypeLabels: Record<DatasetType, string> = {
   standard: '标准数据集',
-  direct: '直连数据集'
+  direct: '直连数据集',
+  sql: 'SQL 数据集'
+};
+
+export const dataSourceTypeLabels: Record<DataSourceType, string> = {
+  mysql: 'MySQL',
+  postgres: 'PostgreSQL'
+};
+
+export const dataSourceStatusLabels: Record<DataSourceStatus, string> = {
+  active: '启用',
+  disabled: '停用'
 };
