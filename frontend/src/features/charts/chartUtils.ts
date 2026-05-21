@@ -13,9 +13,10 @@ export const chartStatusOptions = Object.entries(chartStatusLabels).map(([value,
 
 export const chartTypeGroups: Array<{ key: string; title: string; types: ChartType[] }> = [
   { key: 'table', title: '表格', types: ['detailTable', 'pivotTable', 'comparisonTable'] },
-  { key: 'bar', title: '柱条图', types: ['bar', 'column'] },
-  { key: 'line-area', title: '线面图', types: ['line', 'pie'] },
-  { key: 'content', title: '内容组件', types: ['text'] }
+  { key: 'metric', title: '指标卡', types: ['metricCard', 'metricTrendCard'] },
+  { key: 'bar', title: '柱条图', types: ['bar', 'column', 'stackedBar', 'stackedColumn', 'percentStackedBar', 'percentStackedColumn'] },
+  { key: 'line-area', title: '线面图', types: ['line', 'pie', 'donut'] },
+  { key: 'content', title: '内容组件', types: ['text', 'richText'] }
 ];
 
 export function buildGroupTree(groups: ChartGroup[]): ChartGroupTreeNode[] {

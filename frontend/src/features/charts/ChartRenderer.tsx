@@ -33,14 +33,17 @@ interface G2Mark {
 export function ChartRenderer({ widget, filters }: ChartRendererProps) {
   const filteredRows = useMemo(() => applyDashboardFilters(widget, filters), [filters, widget]);
 
-  if (widget.type === 'text') {
+  if (isTextWidget(widget)) {
     return <TextRenderer widget={widget} />;
   }
 
   if (!filteredRows.length) {
     return <ChartPlaceholder widget={widget} />;
   }
-  if (widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable') {
+  if (isMetricWidget(widget)) {
+    return <MetricRenderer widget={widget} rows={filteredRows} />;
+  }
+  if (isTableWidget(widget)) {
     return <S2Renderer widget={widget} rows={filteredRows} />;
   }
   return <G2Renderer widget={widget} rows={filteredRows} />;
@@ -76,14 +79,20 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         mark.encode('color', colorField);
       }
     }
-    if (widget.type === 'column') {
+    if (widget.type === 'column' || widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
       mark = runtime.interval() as unknown as G2Mark;
       mark.data(intervalRows).encode('x', xField).encode('y', yField);
       if (colorField) {
         mark.encode('color', colorField);
       }
+      if (widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
+        mark.transform({ type: 'stackY' });
+      }
+      if (widget.type === 'percentStackedColumn') {
+        mark.transform({ type: 'normalizeY' });
+      }
     }
-    if (widget.type === 'bar') {
+    if (widget.type === 'bar' || widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
       mark = runtime.interval() as unknown as G2Mark;
       mark
         .data(intervalRows)
@@ -93,15 +102,21 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
       if (colorField) {
         mark.encode('color', colorField);
       }
+      if (widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
+        mark.transform({ type: 'stackY' });
+      }
+      if (widget.type === 'percentStackedBar') {
+        mark.transform({ type: 'normalizeY' });
+      }
     }
-    if (widget.type === 'pie') {
+    if (widget.type === 'pie' || widget.type === 'donut') {
       mark = runtime.interval() as unknown as G2Mark;
       mark
-        .data(rows)
-        .coordinate({ type: 'theta', outerRadius: 0.82 })
+        .data(collapseIntervalRows(rows, xField, yField))
+        .coordinate({ type: 'theta', outerRadius: 0.82, innerRadius: widget.type === 'donut' ? 0.58 : 0 })
         .transform({ type: 'stackY' })
         .encode('y', yField)
-        .encode('color', colorField ?? xField);
+        .encode('color', xField);
     }
 
     if (mark) {
@@ -216,6 +231,53 @@ function TextRenderer({ widget }: Pick<ChartRendererProps, 'widget'>) {
   );
 }
 
+function MetricRenderer({ widget, rows: rawRows }: ChartRuntimeProps) {
+  const rows = normalizedRows(widget, rawRows);
+  const dimensionField = displayFieldName(widget, widget.config.dimensions[0] ?? 'category');
+  const measureField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
+  const compareField = widget.config.measures[1] ? displayFieldName(widget, widget.config.measures[1]) : undefined;
+  const value = sumNumericField(rows, measureField);
+  const compareValue = compareField ? sumNumericField(rows, compareField) : null;
+  const trendPoints = buildTrendPoints(rows, dimensionField, measureField);
+  const delta = compareValue && compareValue !== 0 ? ((value - compareValue) / Math.abs(compareValue)) * 100 : null;
+
+  return (
+    <div className={`chart-renderer metric-renderer ${widget.type === 'metricTrendCard' ? 'metric-trend-renderer' : ''}`}>
+      <div className="chart-title">{widget.config.title}</div>
+      <div className="metric-card-body">
+        <div>
+          <div className="metric-label">{measureField}</div>
+          <div className="metric-value">{formatMetricValue(value)}</div>
+          {delta !== null && <div className={`metric-delta ${delta >= 0 ? 'positive' : 'negative'}`}>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</div>}
+        </div>
+        {widget.type === 'metricTrendCard' && <MetricTrendSvg points={trendPoints} />}
+      </div>
+    </div>
+  );
+}
+
+function MetricTrendSvg({ points }: { points: number[] }) {
+  if (points.length < 2) {
+    return <div className="metric-trend-empty">暂无趋势</div>;
+  }
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  const path = points
+    .map((value, index) => {
+      const x = (index / Math.max(points.length - 1, 1)) * 120;
+      const y = 52 - ((value - min) / range) * 44;
+      return `${index === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(' ');
+  return (
+    <svg className="metric-trend-svg" viewBox="0 0 120 60" role="img" aria-label="指标趋势">
+      <path d={path} fill="none" stroke="#1677ff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d={`${path} L120 58 L0 58 Z`} fill="rgba(22, 119, 255, 0.1)" stroke="none" />
+    </svg>
+  );
+}
+
 function normalizedRows(widget: ChartWidget, rows: DataRow[]): DataRow[] {
   return rows.map((row) => {
     const next: DataRow = {};
@@ -224,6 +286,45 @@ function normalizedRows(widget: ChartWidget, rows: DataRow[]): DataRow[] {
     });
     return next;
   });
+}
+
+function isTextWidget(widget: ChartWidget): boolean {
+  return widget.type === 'text' || widget.type === 'richText';
+}
+
+function isTableWidget(widget: ChartWidget): boolean {
+  return widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable';
+}
+
+function isMetricWidget(widget: ChartWidget): boolean {
+  return widget.type === 'metricCard' || widget.type === 'metricTrendCard';
+}
+
+function sumNumericField(rows: DataRow[], field: string): number {
+  return rows.reduce((sum, row) => {
+    const value = row[field];
+    return typeof value === 'number' ? sum + value : sum;
+  }, 0);
+}
+
+function buildTrendPoints(rows: DataRow[], dimensionField: string, measureField: string): number[] {
+  const grouped = new Map<string, number>();
+  rows.forEach((row) => {
+    const key = String(row[dimensionField] ?? '');
+    const value = row[measureField];
+    if (typeof value !== 'number') {
+      return;
+    }
+    grouped.set(key, (grouped.get(key) ?? 0) + value);
+  });
+  return [...grouped.values()].slice(0, 12);
+}
+
+function formatMetricValue(value: number): string {
+  return new Intl.NumberFormat('zh-CN', {
+    notation: Math.abs(value) >= 10000 ? 'compact' : 'standard',
+    maximumFractionDigits: 1
+  }).format(value);
 }
 
 function collapseIntervalRows(rows: DataRow[], xField: string, yField: string, colorField?: string): DataRow[] {
@@ -249,7 +350,7 @@ function collapseIntervalRows(rows: DataRow[], xField: string, yField: string, c
 
 function applyDashboardFilters(widget: ChartWidget, filters?: DashboardFilters): DataRow[] {
   const rows = widget.config.previewRows ?? [];
-  if (!filters || widget.type === 'text') {
+  if (!filters || isTextWidget(widget)) {
     return rows;
   }
 
@@ -264,7 +365,8 @@ function applyDashboardFilters(widget: ChartWidget, filters?: DashboardFilters):
     nextRows = nextRows.filter((row) => allowedValues.has(String(row[field] ?? '')));
   });
 
-  if ((!filters.timeFilter.chartId || filters.timeFilter.chartId === widget.id) && filters.timeFilter.range) {
+  const timeFilterEnabled = Boolean(filters.timeFilter.enabled || filters.timeFilter.range);
+  if (timeFilterEnabled && (!filters.timeFilter.chartId || filters.timeFilter.chartId === widget.id) && filters.timeFilter.range) {
     const timeField = findTimeField(widget, nextRows);
     if (timeField) {
       nextRows = nextRows.filter((row) => valueInTimeRange(row[timeField], filters.timeFilter.range as [string, string]));
@@ -390,14 +492,15 @@ function escapeHtml(value: string): string {
 }
 
 function ChartPlaceholder({ widget }: ChartRendererProps) {
-  const isTable = widget.type === 'detailTable' || widget.type === 'pivotTable' || widget.type === 'comparisonTable';
-  const isPie = widget.type === 'pie';
+  const isTable = isTableWidget(widget);
+  const isMetric = isMetricWidget(widget);
+  const isPie = widget.type === 'pie' || widget.type === 'donut';
   const isLine = widget.type === 'line';
 
   return (
     <div className="chart-renderer">
       <div className="chart-title">{widget.config.title}</div>
-      <div className={`chart-placeholder ${isTable ? 'table' : isPie ? 'pie' : isLine ? 'line' : 'bar'}`}>
+      <div className={`chart-placeholder ${isTable ? 'table' : isMetric ? 'metric' : isPie ? 'pie' : isLine ? 'line' : 'bar'}`}>
         {isTable && (
           <>
             <div className="placeholder-table-head" />
@@ -411,8 +514,15 @@ function ChartPlaceholder({ widget }: ChartRendererProps) {
           </>
         )}
         {isPie && <div className="placeholder-pie" />}
+        {isMetric && (
+          <div className="placeholder-metric-card">
+            <span />
+            <strong />
+            <em />
+          </div>
+        )}
         {isLine && <div className="placeholder-line" />}
-        {!isTable && !isPie && !isLine && (
+        {!isTable && !isMetric && !isPie && !isLine && (
           <div className="placeholder-bars">
             {[46, 74, 58, 88, 66].map((height, index) => (
               <span key={index} style={{ height: `${height}%` }} />

@@ -24,9 +24,8 @@ export function AppShell() {
           <Space size={16} className="app-header-left">
             <Link to="/charts" className="brand">
               <PieChartOutlined />
-              <span>LightBI</span>
+              <span>智能BI</span>
             </Link>
-            <Typography.Text strong>BI 仪表盘资产管理</Typography.Text>
           </Space>
           <div className="app-header-actions">
             {toolbar?.visible && (

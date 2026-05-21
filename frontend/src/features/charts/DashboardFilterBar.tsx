@@ -1,4 +1,4 @@
-import { DeleteOutlined, FilterOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons';
+import { CalendarOutlined, DeleteOutlined, FilterOutlined, PlusOutlined, SlidersOutlined } from '@ant-design/icons';
 import { Button, DatePicker, Input, Modal, Select, Typography } from 'antd';
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
@@ -46,6 +46,7 @@ export function DashboardFilterBar() {
     [filters.dimensionControls, widgets]
   );
   const [dimensionDraft, setDimensionDraft] = useState<DimensionDraft | null>(null);
+  const timeEnabled = Boolean(filters.timeFilter.enabled || filters.timeFilter.range);
   const timeRangeValue: [Dayjs, Dayjs] | null = filters.timeFilter.range
     ? [dayjs(filters.timeFilter.range[0]), dayjs(filters.timeFilter.range[1])]
     : null;
@@ -53,6 +54,7 @@ export function DashboardFilterBar() {
   useEffect(() => {
     const nextTimeFilter = {
       label: filters.timeFilter.label || '日期',
+      enabled: Boolean(filters.timeFilter.enabled || filters.timeFilter.range),
       range: filters.timeFilter.range ?? null
     };
 
@@ -68,7 +70,22 @@ export function DashboardFilterBar() {
   }, [filters.dimensionControls, filters.timeFilter, normalizedControls, setFilters]);
 
   const updateTimeFilter = (patch: Partial<DashboardFilters['timeFilter']>) => {
-    setFilters({ timeFilter: { label: filters.timeFilter.label || '日期', range: filters.timeFilter.range ?? null, ...patch } });
+    setFilters({
+      timeFilter: {
+        label: filters.timeFilter.label || '日期',
+        enabled: timeEnabled,
+        range: filters.timeFilter.range ?? null,
+        ...patch
+      }
+    });
+  };
+
+  const addTimeFilter = () => {
+    updateTimeFilter({ enabled: true, label: filters.timeFilter.label || '日期' });
+  };
+
+  const deleteTimeFilter = () => {
+    updateTimeFilter({ enabled: false, label: '日期', range: null });
   };
 
   const openDimensionModal = (control?: DashboardDimensionFilter) => {
@@ -123,73 +140,94 @@ export function DashboardFilterBar() {
         <Typography.Text>筛选栏</Typography.Text>
       </div>
 
-      <div className="filter-inline-control">
-        <Input
-          className="filter-name-input"
-          value={filters.timeFilter.label}
-          placeholder="日期"
-          onChange={(event) => updateTimeFilter({ label: event.target.value || '日期' })}
-        />
-        <RangePicker
-          allowClear
-          value={timeRangeValue}
-          placeholder={['开始日期', '结束日期']}
-          onChange={(dates) => {
-            const range =
-              dates?.[0] && dates[1]
-                ? ([dates[0].startOf('day').toISOString(), dates[1].endOf('day').toISOString()] as [string, string])
-                : null;
-            updateTimeFilter({ range });
-          }}
-        />
+      <div className="filter-dynamic-actions">
+        {!timeEnabled && (
+          <Button icon={<CalendarOutlined />} onClick={addTimeFilter}>
+            添加日期
+          </Button>
+        )}
+        <Button icon={<PlusOutlined />} onClick={() => openDimensionModal()}>
+          添加维度
+        </Button>
       </div>
 
-      <section className="filter-config-card">
-        <div className="filter-config-card-title">
-          <SlidersOutlined />
-          <Typography.Text>维度控件</Typography.Text>
-        </div>
-        <div className="dimension-control-list">
-          {normalizedControls.map((control) => {
-            const valueOptions = buildDimensionValueOptions(widgets, control);
-            return (
-              <div key={control.id} className="dimension-control-row">
-                <Input
-                  readOnly
-                  className="filter-name-input dimension-name-trigger"
-                  value={control.label || '维度'}
-                  placeholder="维度"
-                  onClick={() => openDimensionModal(control)}
-                />
-                <Select
-                  allowClear
-                  showSearch
-                  mode="multiple"
-                  maxTagCount="responsive"
-                  className="filter-value-select"
-                  disabled={!control.chartIds?.length || !valueOptions.length}
-                  value={control.values}
-                  placeholder={`筛选${control.label || '维度'}`}
-                  optionFilterProp="label"
-                  options={valueOptions}
-                  onChange={(values) => updateDimensionValues(control.id, values)}
-                />
-                <Button
-                  aria-label={`删除${control.label || '维度'}`}
-                  className="dimension-delete-button"
-                  danger
-                  icon={<DeleteOutlined />}
-                  type="text"
-                  onClick={() => deleteDimensionControl(control.id)}
-                />
-              </div>
-            );
-          })}
-          <Button className="dimension-add-button" icon={<PlusOutlined />} onClick={() => openDimensionModal()}>
-            添加维度
-          </Button>
-        </div>
-      </section>
+      <div className="filter-dynamic-controls">
+        {timeEnabled && (
+          <div className="filter-inline-control dynamic-filter-item">
+            <Input
+              className="filter-name-input"
+              value={filters.timeFilter.label}
+              placeholder="日期"
+              onChange={(event) => updateTimeFilter({ label: event.target.value || '日期' })}
+            />
+            <RangePicker
+              allowClear
+              value={timeRangeValue}
+              placeholder={['开始日期', '结束日期']}
+              onChange={(dates) => {
+                const range =
+                  dates?.[0] && dates[1]
+                    ? ([dates[0].startOf('day').toISOString(), dates[1].endOf('day').toISOString()] as [string, string])
+                    : null;
+                updateTimeFilter({ range });
+              }}
+            />
+            <Button
+              aria-label="删除日期"
+              className="dimension-delete-button"
+              danger
+              icon={<DeleteOutlined />}
+              type="text"
+              onClick={deleteTimeFilter}
+            />
+          </div>
+        )}
+        {normalizedControls.length > 0 && (
+          <div className="filter-config-card">
+            <div className="filter-config-card-title">
+              <SlidersOutlined />
+              <Typography.Text>维度控件</Typography.Text>
+            </div>
+            <div className="dimension-control-list">
+              {normalizedControls.map((control) => {
+                const valueOptions = buildDimensionValueOptions(widgets, control);
+                return (
+                  <div key={control.id} className="dimension-control-row">
+                    <Input
+                      readOnly
+                      className="filter-name-input dimension-name-trigger"
+                      value={control.label || '维度'}
+                      placeholder="维度"
+                      onClick={() => openDimensionModal(control)}
+                    />
+                    <Select
+                      allowClear
+                      showSearch
+                      mode="multiple"
+                      maxTagCount="responsive"
+                      className="filter-value-select"
+                      disabled={!control.chartIds?.length || !valueOptions.length}
+                      value={control.values}
+                      placeholder={`筛选${control.label || '维度'}`}
+                      optionFilterProp="label"
+                      options={valueOptions}
+                      onChange={(values) => updateDimensionValues(control.id, values)}
+                    />
+                    <Button
+                      aria-label={`删除${control.label || '维度'}`}
+                      className="dimension-delete-button"
+                      danger
+                      icon={<DeleteOutlined />}
+                      type="text"
+                      onClick={() => deleteDimensionControl(control.id)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
 
       <Modal
         title="配置维度"
@@ -252,7 +290,7 @@ function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: C
 }
 
 function normalizeChartIds(control: DashboardDimensionFilter, widgets: ChartWidget[]): string[] {
-  const validChartIds = new Set(widgets.filter((widget) => widget.type !== 'text').map((widget) => widget.id));
+  const validChartIds = new Set(widgets.filter((widget) => widget.type !== 'text' && widget.type !== 'richText').map((widget) => widget.id));
   const explicitChartIds = control.chartIds?.length ? control.chartIds : control.chartId ? [control.chartId] : [];
   const chartIds = explicitChartIds.map(String).filter((chartId) => validChartIds.has(chartId));
 
@@ -261,13 +299,13 @@ function normalizeChartIds(control: DashboardDimensionFilter, widgets: ChartWidg
   }
 
   return widgets
-    .filter((widget) => widget.type !== 'text' && widget.config.dimensions.includes(control.field))
+    .filter((widget) => widget.type !== 'text' && widget.type !== 'richText' && widget.config.dimensions.includes(control.field))
     .map((widget) => widget.id);
 }
 
 function buildChartOptions(widgets: ChartWidget[]): ChartOption[] {
   return widgets
-    .filter((widget) => widget.type !== 'text')
+    .filter((widget) => widget.type !== 'text' && widget.type !== 'richText')
     .map((widget) => ({
       value: widget.id,
       label: widget.config.title || '未命名图表'

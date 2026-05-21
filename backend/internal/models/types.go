@@ -43,19 +43,31 @@ func ValidDatasetType(datasetType DatasetType) bool {
 type ChartType string
 
 const (
-	ChartTypeDetailTable     ChartType = "detailTable"
-	ChartTypePivotTable      ChartType = "pivotTable"
-	ChartTypeComparisonTable ChartType = "comparisonTable"
-	ChartTypeLine            ChartType = "line"
-	ChartTypeColumn          ChartType = "column"
-	ChartTypeBar             ChartType = "bar"
-	ChartTypePie             ChartType = "pie"
-	ChartTypeText            ChartType = "text"
+	ChartTypeDetailTable          ChartType = "detailTable"
+	ChartTypePivotTable           ChartType = "pivotTable"
+	ChartTypeComparisonTable      ChartType = "comparisonTable"
+	ChartTypeMetricCard           ChartType = "metricCard"
+	ChartTypeMetricTrendCard      ChartType = "metricTrendCard"
+	ChartTypeLine                 ChartType = "line"
+	ChartTypeColumn               ChartType = "column"
+	ChartTypeBar                  ChartType = "bar"
+	ChartTypeStackedColumn        ChartType = "stackedColumn"
+	ChartTypeStackedBar           ChartType = "stackedBar"
+	ChartTypePercentStackedColumn ChartType = "percentStackedColumn"
+	ChartTypePercentStackedBar    ChartType = "percentStackedBar"
+	ChartTypePie                  ChartType = "pie"
+	ChartTypeDonut                ChartType = "donut"
+	ChartTypeRichText             ChartType = "richText"
+	ChartTypeText                 ChartType = "text"
 )
 
 func ValidChartType(chartType ChartType) bool {
 	switch chartType {
-	case ChartTypeDetailTable, ChartTypePivotTable, ChartTypeComparisonTable, ChartTypeLine, ChartTypeColumn, ChartTypeBar, ChartTypePie, ChartTypeText:
+	case ChartTypeDetailTable, ChartTypePivotTable, ChartTypeComparisonTable,
+		ChartTypeMetricCard, ChartTypeMetricTrendCard,
+		ChartTypeLine, ChartTypeColumn, ChartTypeBar,
+		ChartTypeStackedColumn, ChartTypeStackedBar, ChartTypePercentStackedColumn, ChartTypePercentStackedBar,
+		ChartTypePie, ChartTypeDonut, ChartTypeRichText, ChartTypeText:
 		return true
 	default:
 		return false

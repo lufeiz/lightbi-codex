@@ -251,6 +251,19 @@ export function ChartEditorPage() {
 }
 
 function ChartTypeIcon({ type }: { type: ChartType }) {
+  if (type === 'metricCard' || type === 'metricTrendCard') {
+    return (
+      <span className="chart-type-icon" aria-hidden="true">
+        <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
+          <rect x="3" y="3" width="22" height="22" rx="6" fill="#ecfdf5" />
+          <path d="M8 18.5h12" stroke="#10b981" strokeWidth="2.4" strokeLinecap="round" />
+          <path d="M8 13h7" stroke="#1677ff" strokeWidth="2.4" strokeLinecap="round" />
+          <path d="M18 10l3 3-3 3" fill="none" stroke="#9254de" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </span>
+    );
+  }
+
   if (type === 'line') {
     return (
       <span className="chart-type-icon" aria-hidden="true">
@@ -265,7 +278,7 @@ function ChartTypeIcon({ type }: { type: ChartType }) {
     );
   }
 
-  if (type === 'pie') {
+  if (type === 'pie' || type === 'donut') {
     return (
       <span className="chart-type-icon" aria-hidden="true">
         <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
@@ -273,32 +286,39 @@ function ChartTypeIcon({ type }: { type: ChartType }) {
           <path d="M14 6a8 8 0 018 8h-8z" fill="#1677ff" />
           <path d="M22 14a8 8 0 01-11.6 7.1L14 14z" fill="#52c41a" />
           <path d="M10.4 21.1A8 8 0 0114 6v8z" fill="#fa8c16" />
+          {type === 'donut' && <circle cx="14" cy="14" r="3.2" fill="#fff7e6" />}
         </svg>
       </span>
     );
   }
 
-  if (type === 'bar') {
+  if (type === 'bar' || type === 'stackedBar' || type === 'percentStackedBar') {
     return (
       <span className="chart-type-icon" aria-hidden="true">
         <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
           <rect x="3" y="3" width="22" height="22" rx="6" fill="#f6ffed" />
-          <rect x="7" y="8" width="14" height="4" rx="2" fill="#36cfc9" />
-          <rect x="7" y="13" width="10" height="4" rx="2" fill="#1677ff" />
-          <rect x="7" y="18" width="16" height="4" rx="2" fill="#9254de" />
+          <rect x="7" y="8" width={type === 'bar' ? 14 : 7} height="4" rx="2" fill="#36cfc9" />
+          {type !== 'bar' && <rect x="14" y="8" width="7" height="4" rx="2" fill="#1677ff" />}
+          <rect x="7" y="13" width={type === 'bar' ? 10 : 6} height="4" rx="2" fill="#1677ff" />
+          {type !== 'bar' && <rect x="13" y="13" width="8" height="4" rx="2" fill="#9254de" />}
+          <rect x="7" y="18" width={type === 'bar' ? 16 : 8} height="4" rx="2" fill="#9254de" />
+          {type !== 'bar' && <rect x="15" y="18" width="8" height="4" rx="2" fill="#fa8c16" />}
         </svg>
       </span>
     );
   }
 
-  if (type === 'column') {
+  if (type === 'column' || type === 'stackedColumn' || type === 'percentStackedColumn') {
     return (
       <span className="chart-type-icon" aria-hidden="true">
         <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">
           <rect x="3" y="3" width="22" height="22" rx="6" fill="#f0f5ff" />
           <rect x="7" y="14" width="4" height="7" rx="1.5" fill="#36cfc9" />
+          {type !== 'column' && <rect x="7" y="9" width="4" height="5" rx="1.5" fill="#1677ff" />}
           <rect x="12" y="10" width="4" height="11" rx="1.5" fill="#1677ff" />
+          {type !== 'column' && <rect x="12" y="6" width="4" height="4" rx="1.5" fill="#9254de" />}
           <rect x="17" y="7" width="4" height="14" rx="1.5" fill="#9254de" />
+          {type !== 'column' && <rect x="17" y="4" width="4" height="3" rx="1.5" fill="#fa8c16" />}
         </svg>
       </span>
     );
@@ -317,7 +337,7 @@ function ChartTypeIcon({ type }: { type: ChartType }) {
     );
   }
 
-  if (type === 'text') {
+  if (type === 'text' || type === 'richText') {
     return (
       <span className="chart-type-icon" aria-hidden="true">
         <svg className="chart-type-icon-svg" viewBox="0 0 28 28" focusable="false">

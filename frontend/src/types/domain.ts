@@ -15,10 +15,18 @@ export type ChartType =
   | 'detailTable'
   | 'pivotTable'
   | 'comparisonTable'
+  | 'metricCard'
+  | 'metricTrendCard'
   | 'line'
   | 'column'
   | 'bar'
+  | 'stackedColumn'
+  | 'stackedBar'
+  | 'percentStackedColumn'
+  | 'percentStackedBar'
   | 'pie'
+  | 'donut'
+  | 'richText'
   | 'text';
 
 export type ChartStatus = 'draft' | 'published' | 'archived';
@@ -111,6 +119,7 @@ export interface DashboardFilters {
 export interface DashboardTimeFilter {
   label: string;
   chartId?: string;
+  enabled?: boolean;
   range: [string, string] | null;
 }
 
@@ -204,10 +213,18 @@ export const chartTypeLabels: Record<ChartType, string> = {
   detailTable: '明细表',
   pivotTable: '交叉表',
   comparisonTable: '对比表',
+  metricCard: '指标看板',
+  metricTrendCard: '指标趋势卡',
   line: '折线图',
   column: '柱状图',
   bar: '条形图',
+  stackedColumn: '堆叠柱状图',
+  stackedBar: '堆叠条形图',
+  percentStackedColumn: '堆叠百分比柱状图',
+  percentStackedBar: '堆叠百分比条形图',
   pie: '饼图',
+  donut: '环图',
+  richText: '富文本',
   text: '文本框'
 };
 

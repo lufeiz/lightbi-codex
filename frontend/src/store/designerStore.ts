@@ -23,6 +23,7 @@ interface DesignerState {
   setFilters: (filters: Partial<DashboardFilters>) => void;
   resetFilters: () => void;
   addWidget: (type: ChartType) => void;
+  deleteWidget: (id: string) => void;
   selectWidget: (id: string | null) => void;
   syncPrimaryTitle: (title: string) => void;
   updateWidget: (id: string, patch: Partial<ChartWidget>) => void;
@@ -41,9 +42,10 @@ const defaultMeta: DesignerMeta = {
 const createDefaultFilters = (): DashboardFilters => ({
   timeFilter: {
     label: '日期',
+    enabled: false,
     range: null
   },
-  dimensionControls: [createDefaultDimensionControl()]
+  dimensionControls: []
 });
 
 export const useDesignerStore = create<DesignerState>((set, get) => ({
@@ -90,6 +92,21 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       widgets: [...state.widgets, widget],
       selectedWidgetId: widget.id
     }));
+  },
+  deleteWidget(id) {
+    set((state) => {
+      const targetIndex = state.widgets.findIndex((widget) => widget.id === id);
+      if (targetIndex < 0) {
+        return state;
+      }
+      const widgets = state.widgets.filter((widget) => widget.id !== id);
+      const nextSelectedWidget = widgets[targetIndex] ?? widgets[targetIndex - 1] ?? widgets[0] ?? null;
+      return {
+        widgets,
+        selectedWidgetId: state.selectedWidgetId === id ? (nextSelectedWidget?.id ?? null) : state.selectedWidgetId,
+        filters: removeWidgetFromFilters(state.filters, id)
+      };
+    });
   },
   selectWidget(id) {
     set({ selectedWidgetId: id });
@@ -150,15 +167,16 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
 
 function createWidget(type: ChartType, x: number, y: number): ChartWidget {
   const isTable = type.includes('Table');
-  const isText = type === 'text';
+  const isText = type === 'text' || type === 'richText';
+  const isMetric = type === 'metricCard' || type === 'metricTrendCard';
 
   return {
     id: safeId(),
     type,
     x,
     y,
-    width: isText ? 360 : isTable ? 520 : 440,
-    height: isText ? 180 : isTable ? 320 : 300,
+    width: isMetric ? 320 : isText ? 360 : isTable ? 520 : 440,
+    height: isMetric ? (type === 'metricTrendCard' ? 220 : 180) : isText ? 180 : isTable ? 320 : 300,
     config: {
       title: chartTypeLabels[type],
       showLabel: true,
@@ -187,17 +205,19 @@ function normalizeFilters(filters: LegacyDashboardFilters | undefined, widgets: 
   }
 
   const dimensionControls = normalizeDimensionControls(filters, widgets);
+  const range = Array.isArray(filters.timeFilter?.range)
+    ? filters.timeFilter.range
+    : Array.isArray(filters.timeRange) && filters.timeRange.length === 2
+      ? filters.timeRange
+      : null;
 
   return {
     timeFilter: {
       label: filters.timeFilter?.label || '日期',
-      range: Array.isArray(filters.timeFilter?.range)
-        ? filters.timeFilter.range
-        : Array.isArray(filters.timeRange) && filters.timeRange.length === 2
-          ? filters.timeRange
-          : null
+      enabled: filters.timeFilter?.enabled ?? Boolean(range),
+      range
     },
-    dimensionControls: dimensionControls.length ? dimensionControls : [createDefaultDimensionControl()]
+    dimensionControls
   };
 }
 
@@ -264,14 +284,15 @@ function normalizeDimensionControls(filters: LegacyDashboardFilters, widgets: Ch
   ];
 }
 
-function createDefaultDimensionControl(): DashboardDimensionFilter {
+function removeWidgetFromFilters(filters: DashboardFilters, widgetId: string): DashboardFilters {
   return {
-    id: createFilterId(),
-    label: '维度',
-    chartIds: [],
-    field: '',
-    fieldsByChart: {},
-    values: []
+    timeFilter: filters.timeFilter.chartId === widgetId ? { ...filters.timeFilter, chartId: undefined } : filters.timeFilter,
+    dimensionControls: filters.dimensionControls.map((control) => ({
+      ...control,
+      chartId: control.chartId === widgetId ? undefined : control.chartId,
+      chartIds: control.chartIds?.filter((id) => id !== widgetId),
+      fieldsByChart: Object.fromEntries(Object.entries(control.fieldsByChart ?? {}).filter(([id]) => id !== widgetId))
+    }))
   };
 }
 

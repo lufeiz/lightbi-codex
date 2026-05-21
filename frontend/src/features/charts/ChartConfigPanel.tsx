@@ -1,18 +1,19 @@
 import {
   BoldOutlined,
   DatabaseOutlined,
-  DragOutlined,
   FontColorsOutlined,
   ItalicOutlined,
   LeftOutlined,
   ReloadOutlined,
   RightOutlined
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, message, Select, Space, Switch, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Form, Input, message, Select, Switch, Tag, Tooltip, Typography } from 'antd';
 import type { ClipboardEvent, DragEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { api } from '@/api/client';
+import dimensionFieldIcon from '@/assets/dimension-field-icon.svg';
+import measureFieldIcon from '@/assets/measure-field-icon.svg';
 import { useDesignerStore } from '@/store/designerStore';
 import type { ChartConfig, ChartWidget, DatasetField, DatasetSummary, DatasetType } from '@/types/domain';
 import { chartTypeLabels, datasetTypeLabels } from '@/types/domain';
@@ -79,16 +80,7 @@ function SelectedChartConfigPanel({
   const [datasetFields, setDatasetFields] = useState<DatasetFieldSet | null>(null);
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [updatingPreview, setUpdatingPreview] = useState(false);
-  const isTextWidget = selectedWidget.type === 'text';
-
-  const dimensionOptions = useMemo(
-    () => (datasetFields?.dimensions ?? []).map((field) => ({ value: field.name, label: `${field.label} (${field.name})` })),
-    [datasetFields]
-  );
-  const measureOptions = useMemo(
-    () => (datasetFields?.measures ?? []).map((field) => ({ value: field.name, label: `${field.label} (${field.name})` })),
-    [datasetFields]
-  );
+  const isTextWidget = selectedWidget.type === 'text' || selectedWidget.type === 'richText';
 
   useEffect(() => {
     if (selectedWidget) {
@@ -260,18 +252,18 @@ function SelectedChartConfigPanel({
         .filter(Boolean)
         .join(' ')}
     >
-      <div className={`config-form-module drawer-module ${configCollapsed ? 'drawer-module-collapsed' : ''}`}>
-        <div className="drawer-module-header">
-          <Typography.Text className="drawer-module-title">图表配置</Typography.Text>
-          <Button
-            aria-label={configCollapsed ? '展开图表配置' : '收起图表配置'}
-            icon={configCollapsed ? <RightOutlined /> : <LeftOutlined />}
-            size="small"
-            type="text"
-            onClick={() => onConfigCollapsedChange(!configCollapsed)}
-          />
-        </div>
-        {!configCollapsed && (
+      {!configCollapsed && (
+        <div className="config-form-module drawer-module">
+          <div className="drawer-module-header">
+            <Typography.Text className="drawer-module-title">图表配置</Typography.Text>
+            <Button
+              aria-label="收起图表配置"
+              icon={<RightOutlined />}
+              size="small"
+              type="text"
+              onClick={() => onConfigCollapsedChange(true)}
+            />
+          </div>
           <Form<ChartConfig>
             form={form}
             className="render-config-form drawer-module-body"
@@ -286,40 +278,52 @@ function SelectedChartConfigPanel({
             </Form.Item>
             <section className="config-section">
               <Form.Item label="维度">
-                <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('dimensions', event)}>
-                  <Select
-                    mode="multiple"
-                    placeholder="双击或拖拽维度字段到这里"
-                    options={dimensionOptions}
-                    value={selectedWidget.config.dimensions ?? []}
-                    onChange={(fields) => changeFields('dimensions', fields)}
-                  />
-                </div>
+                <SelectedFieldDropZone
+                  role="dimensions"
+                  fields={selectedWidget.config.dimensions ?? []}
+                  fieldLabels={selectedWidget.config.fieldLabels}
+                  onDrop={handleDrop}
+                  onRemove={(field) =>
+                    changeFields(
+                      'dimensions',
+                      (selectedWidget.config.dimensions ?? []).filter((item) => item !== field)
+                    )
+                  }
+                />
               </Form.Item>
               <Form.Item label="指标">
-                <div className="field-drop-zone" onDragOver={(event) => event.preventDefault()} onDrop={(event) => handleDrop('measures', event)}>
-                  <Select
-                    mode="multiple"
-                    placeholder="双击或拖拽指标字段到这里"
-                    options={measureOptions}
-                    value={selectedWidget.config.measures ?? []}
-                    onChange={(fields) => changeFields('measures', fields)}
-                  />
+                <SelectedFieldDropZone
+                  role="measures"
+                  fields={selectedWidget.config.measures ?? []}
+                  fieldLabels={selectedWidget.config.fieldLabels}
+                  onDrop={handleDrop}
+                  onRemove={(field) =>
+                    changeFields(
+                      'measures',
+                      (selectedWidget.config.measures ?? []).filter((item) => item !== field)
+                    )
+                  }
+                />
+              </Form.Item>
+              <div className="config-switch-list">
+                <div className="config-switch-item">
+                  <span>显示标签</span>
+                  <Form.Item name="showLabel" valuePropName="checked" noStyle>
+                    <Switch />
+                  </Form.Item>
                 </div>
-              </Form.Item>
-              <Form.Item name="labelField" label="标签字段">
-                <Input placeholder="销售额" />
-              </Form.Item>
-              <div className="config-switch-row">
-                <Form.Item name="showLabel" label="显示标签" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-                <Form.Item name="showTooltip" label="显示 Tooltip" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
-                <Form.Item name="showScrollbar" label="显示 Scrollbar" valuePropName="checked">
-                  <Switch />
-                </Form.Item>
+                <div className="config-switch-item">
+                  <span>显示 Tooltip</span>
+                  <Form.Item name="showTooltip" valuePropName="checked" noStyle>
+                    <Switch />
+                  </Form.Item>
+                </div>
+                <div className="config-switch-item">
+                  <span>显示 Scrollbar</span>
+                  <Form.Item name="showScrollbar" valuePropName="checked" noStyle>
+                    <Switch />
+                  </Form.Item>
+                </div>
               </div>
             </section>
             <Button
@@ -338,21 +342,21 @@ function SelectedChartConfigPanel({
               </Typography.Text>
             ) : null}
           </Form>
-        )}
-      </div>
-      <div className="config-module-divider" />
-      <aside className={`data-source-module drawer-module ${dataSourceCollapsed ? 'drawer-module-collapsed' : ''}`}>
-        <div className="drawer-module-header">
-          <Typography.Text className="drawer-module-title">数据源配置</Typography.Text>
-          <Button
-            aria-label={dataSourceCollapsed ? '展开数据源配置' : '收起数据源配置'}
-            icon={dataSourceCollapsed ? <LeftOutlined /> : <RightOutlined />}
-            size="small"
-            type="text"
-            onClick={() => onDataSourceCollapsedChange(!dataSourceCollapsed)}
-          />
         </div>
-        {!dataSourceCollapsed && (
+      )}
+      {!configCollapsed && !dataSourceCollapsed && <div className="config-module-divider" />}
+      {!dataSourceCollapsed && (
+        <aside className="data-source-module drawer-module">
+          <div className="drawer-module-header">
+            <Typography.Text className="drawer-module-title">数据源配置</Typography.Text>
+            <Button
+              aria-label="收起数据源配置"
+              icon={<RightOutlined />}
+              size="small"
+              type="text"
+              onClick={() => onDataSourceCollapsedChange(true)}
+            />
+          </div>
           <div className="drawer-module-body data-source-body">
             <Typography.Text className="data-source-field-label" type="secondary">
               数据源类型
@@ -398,8 +402,28 @@ function SelectedChartConfigPanel({
               当前选择仅作用于选中的图表
             </Typography.Text>
           </div>
-        )}
-      </aside>
+        </aside>
+      )}
+      {(configCollapsed || dataSourceCollapsed) && (
+        <div className="drawer-floating-actions" aria-label="收起模块快捷入口">
+          {configCollapsed && (
+            <Button
+              aria-label="展开图表配置"
+              className="drawer-floating-button"
+              icon={<LeftOutlined />}
+              onClick={() => onConfigCollapsedChange(false)}
+            />
+          )}
+          {dataSourceCollapsed && (
+            <Button
+              aria-label="展开数据源配置"
+              className="drawer-floating-button"
+              icon={<LeftOutlined />}
+              onClick={() => onDataSourceCollapsedChange(false)}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -536,27 +560,83 @@ interface FieldListProps {
   onPick: (target: 'dimensions' | 'measures', field: DatasetField) => void;
 }
 
+interface SelectedFieldDropZoneProps {
+  role: 'dimensions' | 'measures';
+  fields: string[];
+  fieldLabels?: Record<string, string>;
+  onDrop: (target: 'dimensions' | 'measures', event: DragEvent<HTMLDivElement>) => void;
+  onRemove: (field: string) => void;
+}
+
+function SelectedFieldDropZone({ role, fields, fieldLabels, onDrop, onRemove }: SelectedFieldDropZoneProps) {
+  const placeholder = role === 'dimensions' ? '双击或拖拽维度字段到这里' : '双击或拖拽指标字段到这里';
+
+  return (
+    <div
+      className={`field-drop-zone field-drop-zone-${role}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => onDrop(role, event)}
+    >
+      {fields.length ? (
+        <div className="selected-field-list">
+          {fields.map((field) => (
+            <Tag
+              key={field}
+              className={`selected-field-tag selected-field-tag-${role}`}
+              closable
+              color={role === 'dimensions' ? 'blue' : 'green'}
+              onClose={(event) => {
+                event.preventDefault();
+                onRemove(field);
+              }}
+            >
+              <FieldRoleIcon role={role} />
+              <span className="selected-field-label">{fieldLabels?.[field] ?? field}</span>
+            </Tag>
+          ))}
+        </div>
+      ) : (
+        <div className={`field-drop-placeholder field-drop-placeholder-${role}`}>
+          <FieldRoleIcon role={role} />
+          <span>{placeholder}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldRoleIcon({ role }: { role: 'dimensions' | 'measures' }) {
+  return (
+    <img
+      className={`field-role-icon field-role-icon-${role}`}
+      src={role === 'dimensions' ? dimensionFieldIcon : measureFieldIcon}
+      alt={role === 'dimensions' ? '维度' : '指标'}
+      draggable={false}
+    />
+  );
+}
+
 function FieldList({ title, role, fields, onPick }: FieldListProps) {
   return (
     <div className="field-list">
       <Typography.Text type="secondary">{title}</Typography.Text>
-      <Space size={[6, 6]} wrap>
+      <div className="field-list-body">
         {fields.map((field) => (
           <Tag
             key={field.name}
-            className="field-token"
+            className={`field-token field-token-${role}`}
             draggable
-            icon={<DragOutlined />}
             color={role === 'dimensions' ? 'blue' : 'green'}
             onDoubleClick={() => onPick(role, field)}
             onDragStart={(event) => {
               event.dataTransfer.setData('application/json', JSON.stringify({ ...field, role }));
             }}
           >
-            {field.label}
+            <FieldRoleIcon role={role} />
+            <span className="field-token-label">{field.label}</span>
           </Tag>
         ))}
-      </Space>
+      </div>
     </div>
   );
 }

@@ -18,6 +18,7 @@ export function DesignerCanvas() {
   const filters = useDesignerStore((state) => state.filters);
   const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
   const selectWidget = useDesignerStore((state) => state.selectWidget);
+  const deleteWidget = useDesignerStore((state) => state.deleteWidget);
   const updateWidget = useDesignerStore((state) => state.updateWidget);
 
   useEffect(() => {
@@ -43,6 +44,21 @@ export function DesignerCanvas() {
       graph.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedWidgetId || (event.key !== 'Backspace' && event.key !== 'Delete') || isEditableTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      deleteWidget(selectedWidgetId);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [deleteWidget, selectedWidgetId]);
 
   const startDrag = (event: PointerEvent<HTMLDivElement>, widget: ChartWidget) => {
     event.preventDefault();
@@ -103,4 +119,12 @@ export function DesignerCanvas() {
       </div>
     </section>
   );
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tagName = target.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable || Boolean(target.closest('[contenteditable="true"]'));
 }
