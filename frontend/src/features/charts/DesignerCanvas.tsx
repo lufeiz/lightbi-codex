@@ -9,12 +9,16 @@ import type { ChartWidget } from '@/types/domain';
 
 const MIN_WIDTH = 280;
 const MIN_HEIGHT = 220;
+const TEXT_MIN_WIDTH = 220;
+const TEXT_MIN_HEIGHT = 120;
 
 export function DesignerCanvas() {
   const x6Ref = useRef<HTMLDivElement | null>(null);
   const widgets = useDesignerStore((state) => state.widgets);
+  const filters = useDesignerStore((state) => state.filters);
   const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
   const selectWidget = useDesignerStore((state) => state.selectWidget);
+  const deleteWidget = useDesignerStore((state) => state.deleteWidget);
   const updateWidget = useDesignerStore((state) => state.updateWidget);
 
   useEffect(() => {
@@ -40,6 +44,21 @@ export function DesignerCanvas() {
       graph.dispose();
     };
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (!selectedWidgetId || (event.key !== 'Backspace' && event.key !== 'Delete') || isEditableTarget(event.target)) {
+        return;
+      }
+      event.preventDefault();
+      deleteWidget(selectedWidgetId);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [deleteWidget, selectedWidgetId]);
 
   const startDrag = (event: PointerEvent<HTMLDivElement>, widget: ChartWidget) => {
     event.preventDefault();
@@ -69,8 +88,8 @@ export function DesignerCanvas() {
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       updateWidget(widget.id, {
-        width: Math.max(MIN_WIDTH, start.width + moveEvent.clientX - start.x),
-        height: Math.max(MIN_HEIGHT, start.height + moveEvent.clientY - start.y)
+        width: Math.max(widget.type === 'text' ? TEXT_MIN_WIDTH : MIN_WIDTH, start.width + moveEvent.clientX - start.x),
+        height: Math.max(widget.type === 'text' ? TEXT_MIN_HEIGHT : MIN_HEIGHT, start.height + moveEvent.clientY - start.y)
       });
     };
     const handleUp = () => {
@@ -93,11 +112,19 @@ export function DesignerCanvas() {
             style={{ left: widget.x, top: widget.y, width: widget.width, height: widget.height }}
             onPointerDown={(event) => startDrag(event, widget)}
           >
-            <ChartRenderer widget={widget} />
+            <ChartRenderer widget={widget} filters={filters} />
             <div className="resize-handle" onPointerDown={(event) => startResize(event, widget)} />
           </div>
         ))}
       </div>
     </section>
   );
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+  const tagName = target.tagName.toLowerCase();
+  return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable || Boolean(target.closest('[contenteditable="true"]'));
 }
