@@ -1,6 +1,8 @@
 package services
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -60,11 +62,16 @@ func (s *JWTService) RefreshTTL() time.Duration {
 
 func (s *JWTService) generate(user models.User, tokenType string, ttl time.Duration, secret []byte) (string, error) {
 	now := time.Now()
+	tokenID, err := randomTokenID()
+	if err != nil {
+		return "", err
+	}
 	claims := Claims{
 		UserID:    user.ID,
 		Role:      string(user.Role),
 		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
+			ID:        tokenID,
 			Subject:   user.Username,
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(ttl)),
@@ -92,4 +99,12 @@ func (s *JWTService) parse(raw string, tokenType string, secret []byte) (*Claims
 		return nil, errors.New("invalid token type")
 	}
 	return claims, nil
+}
+
+func randomTokenID() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
 }
