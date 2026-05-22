@@ -713,6 +713,34 @@ a {
   font-weight: 650;
 }
 
+.chart-theme-business {
+  background: linear-gradient(180deg, #f7fbff 0%, #eef5ff 100%);
+}
+
+.chart-theme-business .chart-title {
+  color: #1450a3;
+}
+
+.chart-theme-fresh {
+  background: linear-gradient(180deg, #fbfffc 0%, #eefbf4 100%);
+}
+
+.chart-theme-fresh .chart-title {
+  color: #087443;
+}
+
+.chart-theme-contrast {
+  background: #172033;
+}
+
+.chart-theme-contrast .chart-title,
+.chart-theme-contrast .metric-label,
+.chart-theme-contrast .metric-value,
+.chart-theme-contrast .metric-trend-empty,
+.chart-theme-contrast .placeholder-caption {
+  color: #f8fbff;
+}
+
 .chart-canvas,
 .s2-canvas {
   flex: 1 1 auto;
@@ -1024,6 +1052,18 @@ a {
 }
 
 .render-config-form {
+  min-width: 0;
+}
+
+.chart-config-tabs .ant-tabs-nav {
+  margin-bottom: 12px;
+}
+
+.chart-config-tabs .ant-tabs-tab {
+  padding: 8px 0;
+}
+
+.chart-config-tabs .ant-tabs-content-holder {
   min-width: 0;
 }
 

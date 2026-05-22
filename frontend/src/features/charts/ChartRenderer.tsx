@@ -134,7 +134,7 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
       if (mark) {
         mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField] } : false);
         if (widget.config.showLabel) {
-          mark.label({ text: labelField });
+          mark.label({ text: labelField, style: { fontSize: widget.config.labelSize ?? 12 } });
         }
       }
       runtime.render();
@@ -148,6 +148,7 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     widget.config.dimensions,
     widget.config.fieldLabels,
     widget.config.labelField,
+    widget.config.labelSize,
     widget.config.measures,
     widget.config.showLabel,
     widget.config.showTooltip,
@@ -158,8 +159,8 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   ]);
 
   return (
-    <div className="chart-renderer">
-      <div className="chart-title">{widget.config.title}</div>
+    <div className={`chart-renderer ${chartThemeClass(widget)}`}>
+      <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
       <div ref={containerRef} className="chart-canvas" />
     </div>
   );
@@ -236,8 +237,8 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   ]);
 
   return (
-    <div className="chart-renderer">
-      <div className="chart-title">{widget.config.title}</div>
+    <div className={`chart-renderer ${chartThemeClass(widget)}`}>
+      <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
       <div ref={containerRef} className="s2-canvas" />
     </div>
   );
@@ -247,7 +248,7 @@ function TextRenderer({ widget }: Pick<ChartRendererProps, 'widget'>) {
   const contentHtml = DOMPurify.sanitize(widget.config.textHtml || escapeHtml(widget.config.textContent?.trim() || '输入文本内容'));
 
   return (
-    <div className="chart-renderer text-widget-renderer">
+    <div className={`chart-renderer text-widget-renderer ${chartThemeClass(widget)}`}>
       <div className="text-widget-content" dangerouslySetInnerHTML={{ __html: contentHtml }} />
     </div>
   );
@@ -264,11 +265,11 @@ function MetricRenderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const delta = compareValue && compareValue !== 0 ? ((value - compareValue) / Math.abs(compareValue)) * 100 : null;
 
   return (
-    <div className={`chart-renderer metric-renderer ${widget.type === 'metricTrendCard' ? 'metric-trend-renderer' : ''}`}>
-      <div className="chart-title">{widget.config.title}</div>
+    <div className={`chart-renderer metric-renderer ${widget.type === 'metricTrendCard' ? 'metric-trend-renderer' : ''} ${chartThemeClass(widget)}`}>
+      <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
       <div className="metric-card-body">
         <div>
-          <div className="metric-label">{measureField}</div>
+          <div className="metric-label" style={{ fontSize: widget.config.labelSize ?? 12 }}>{measureField}</div>
           <div className="metric-value">{formatMetricValue(value)}</div>
           {delta !== null && <div className={`metric-delta ${delta >= 0 ? 'positive' : 'negative'}`}>{delta >= 0 ? '+' : ''}{delta.toFixed(1)}%</div>}
         </div>
@@ -528,6 +529,14 @@ function displayFieldName(widget: ChartWidget, field: string): string {
   return widget.config.fieldLabels?.[field] ?? defaultFieldLabels[field] ?? field;
 }
 
+function chartThemeClass(widget: ChartWidget): string {
+  return `chart-theme-${widget.config.theme ?? 'default'}`;
+}
+
+function chartTitleStyle(widget: ChartWidget): { fontSize?: number } {
+  return widget.config.labelSize ? { fontSize: Math.max(widget.config.labelSize + 2, 13) } : {};
+}
+
 function escapeHtml(value: string): string {
   return value
     .replaceAll('&', '&amp;')
@@ -545,8 +554,8 @@ function ChartPlaceholder({ widget }: ChartRendererProps) {
   const isLine = widget.type === 'line';
 
   return (
-    <div className="chart-renderer">
-      <div className="chart-title">{widget.config.title}</div>
+    <div className={`chart-renderer ${chartThemeClass(widget)}`}>
+      <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
       <div className={`chart-placeholder ${isTable ? 'table' : isMetric ? 'metric' : isPie ? 'pie' : isLine ? 'line' : 'bar'}`}>
         {isTable && (
           <>

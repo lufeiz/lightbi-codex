@@ -7,7 +7,7 @@ import {
   ReloadOutlined,
   RightOutlined
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, message, Select, Switch, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, message, Select, Switch, Tabs, Tag, Tooltip, Typography } from 'antd';
 import DOMPurify from 'dompurify';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -24,6 +24,8 @@ interface DatasetFieldSet {
   dimensions: DatasetField[];
   measures: DatasetField[];
 }
+
+const EMPTY_RUNTIME_ROWS: never[] = [];
 
 interface ChartConfigPanelProps {
   configCollapsed: boolean;
@@ -82,7 +84,7 @@ function SelectedChartConfigPanel({
   const [datasetFields, setDatasetFields] = useState<DatasetFieldSet | null>(null);
   const [datasetError, setDatasetError] = useState<string | null>(null);
   const [updatingPreview, setUpdatingPreview] = useState(false);
-  const runtimeRows = useDesignerStore((state) => state.runtimeRows[selectedWidget.id] ?? []);
+  const runtimeRows = useDesignerStore((state) => state.runtimeRows[selectedWidget.id] ?? EMPTY_RUNTIME_ROWS);
   const setWidgetRows = useDesignerStore((state) => state.setWidgetRows);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
@@ -90,7 +92,13 @@ function SelectedChartConfigPanel({
 
   useEffect(() => {
     if (selectedWidget) {
-      form.setFieldsValue(selectedWidget.config);
+      form.setFieldsValue({
+        theme: 'default',
+        labelSize: 12,
+        enableLinkage: false,
+        linkageMode: 'filter',
+        ...selectedWidget.config
+      });
     } else {
       form.resetFields();
     }
@@ -282,77 +290,135 @@ function SelectedChartConfigPanel({
             layout="vertical"
             onValuesChange={(_, values) => updateWidgetConfig(selectedWidget.id, values)}
           >
-            <Typography.Text className="selected-chart-type" type="secondary">
-              {chartTypeLabels[selectedWidget.type]}
-            </Typography.Text>
-            <Form.Item name="title" label="标题" rules={[{ required: true, message: '请输入标题' }]}>
-              <Input />
-            </Form.Item>
-            <section className="config-section">
-              <Form.Item label="维度">
-                <SelectedFieldDropZone
-                  role="dimensions"
-                  fields={selectedWidget.config.dimensions ?? []}
-                  fieldLabels={selectedWidget.config.fieldLabels}
-                  onDrop={handleDrop}
-                  onRemove={(field) =>
-                    changeFields(
-                      'dimensions',
-                      (selectedWidget.config.dimensions ?? []).filter((item) => item !== field)
-                    )
-                  }
-                />
-              </Form.Item>
-              <Form.Item label="指标">
-                <SelectedFieldDropZone
-                  role="measures"
-                  fields={selectedWidget.config.measures ?? []}
-                  fieldLabels={selectedWidget.config.fieldLabels}
-                  onDrop={handleDrop}
-                  onRemove={(field) =>
-                    changeFields(
-                      'measures',
-                      (selectedWidget.config.measures ?? []).filter((item) => item !== field)
-                    )
-                  }
-                />
-              </Form.Item>
-              <div className="config-switch-list">
-                <div className="config-switch-item">
-                  <span>显示标签</span>
-                  <Form.Item name="showLabel" valuePropName="checked" noStyle>
-                    <Switch />
-                  </Form.Item>
-                </div>
-                <div className="config-switch-item">
-                  <span>显示 Tooltip</span>
-                  <Form.Item name="showTooltip" valuePropName="checked" noStyle>
-                    <Switch />
-                  </Form.Item>
-                </div>
-                <div className="config-switch-item">
-                  <span>显示 Scrollbar</span>
-                  <Form.Item name="showScrollbar" valuePropName="checked" noStyle>
-                    <Switch />
-                  </Form.Item>
-                </div>
-              </div>
-            </section>
-            <Button
-              block
-              type="primary"
-              icon={<ReloadOutlined />}
-              loading={updatingPreview}
-              disabled={!canUpdatePreview}
-              onClick={() => void updatePreviewData()}
-            >
-              更新图表
-            </Button>
-            {runtimeRows.length ? (
-              <Typography.Text className="preview-data-status" type="secondary">
-                已加载 {runtimeRows.length} 条数据
-              </Typography.Text>
-            ) : null}
+            <Tabs
+              className="chart-config-tabs"
+              items={[
+                {
+                  key: 'data',
+                  label: '数据',
+                  children: (
+                    <>
+                      <Typography.Text className="selected-chart-type" type="secondary">
+                        {chartTypeLabels[selectedWidget.type]}
+                      </Typography.Text>
+                      <section className="config-section">
+                        <Form.Item label="维度">
+                          <SelectedFieldDropZone
+                            role="dimensions"
+                            fields={selectedWidget.config.dimensions ?? []}
+                            fieldLabels={selectedWidget.config.fieldLabels}
+                            onDrop={handleDrop}
+                            onRemove={(field) =>
+                              changeFields(
+                                'dimensions',
+                                (selectedWidget.config.dimensions ?? []).filter((item) => item !== field)
+                              )
+                            }
+                          />
+                        </Form.Item>
+                        <Form.Item label="指标">
+                          <SelectedFieldDropZone
+                            role="measures"
+                            fields={selectedWidget.config.measures ?? []}
+                            fieldLabels={selectedWidget.config.fieldLabels}
+                            onDrop={handleDrop}
+                            onRemove={(field) =>
+                              changeFields(
+                                'measures',
+                                (selectedWidget.config.measures ?? []).filter((item) => item !== field)
+                              )
+                            }
+                          />
+                        </Form.Item>
+                      </section>
+                      <Button
+                        block
+                        type="primary"
+                        icon={<ReloadOutlined />}
+                        loading={updatingPreview}
+                        disabled={!canUpdatePreview}
+                        onClick={() => void updatePreviewData()}
+                      >
+                        更新图表
+                      </Button>
+                      {runtimeRows.length ? (
+                        <Typography.Text className="preview-data-status" type="secondary">
+                          已加载 {runtimeRows.length} 条数据
+                        </Typography.Text>
+                      ) : null}
+                    </>
+                  )
+                },
+                {
+                  key: 'style',
+                  label: '样式',
+                  children: (
+                    <section className="config-section">
+                      <Form.Item name="title" label="图表标题" rules={[{ required: true, message: '请输入标题' }]}>
+                        <Input />
+                      </Form.Item>
+                      <Form.Item name="theme" label="主题">
+                        <Select
+                          options={[
+                            { value: 'default', label: '默认' },
+                            { value: 'business', label: '商务蓝' },
+                            { value: 'fresh', label: '清新绿' },
+                            { value: 'contrast', label: '高对比' }
+                          ]}
+                        />
+                      </Form.Item>
+                      <Form.Item name="labelSize" label="标签大小">
+                        <InputNumber className="full-width" min={10} max={24} step={1} addonAfter="px" />
+                      </Form.Item>
+                      <div className="config-switch-list">
+                        <div className="config-switch-item">
+                          <span>显示标签</span>
+                          <Form.Item name="showLabel" valuePropName="checked" noStyle>
+                            <Switch />
+                          </Form.Item>
+                        </div>
+                        <div className="config-switch-item">
+                          <span>显示 Tooltip</span>
+                          <Form.Item name="showTooltip" valuePropName="checked" noStyle>
+                            <Switch />
+                          </Form.Item>
+                        </div>
+                        <div className="config-switch-item">
+                          <span>显示 Scrollbar</span>
+                          <Form.Item name="showScrollbar" valuePropName="checked" noStyle>
+                            <Switch />
+                          </Form.Item>
+                        </div>
+                      </div>
+                    </section>
+                  )
+                },
+                {
+                  key: 'linkage',
+                  label: '联动',
+                  children: (
+                    <section className="config-section">
+                      <div className="config-switch-list">
+                        <div className="config-switch-item">
+                          <span>参与联动</span>
+                          <Form.Item name="enableLinkage" valuePropName="checked" noStyle>
+                            <Switch />
+                          </Form.Item>
+                        </div>
+                      </div>
+                      <Form.Item name="linkageMode" label="联动方式">
+                        <Select
+                          options={[
+                            { value: 'filter', label: '筛选联动' },
+                            { value: 'highlight', label: '高亮联动' }
+                          ]}
+                        />
+                      </Form.Item>
+                    </section>
+                  )
+                }
+              ]}
+            />
           </Form>
         </div>
       )}

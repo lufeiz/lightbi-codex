@@ -256,6 +256,10 @@ export interface ChartConfig {
   showLabel: boolean;
   showTooltip: boolean;
   showScrollbar: boolean;
+  theme?: 'default' | 'business' | 'fresh' | 'contrast';
+  labelSize?: number;
+  enableLinkage?: boolean;
+  linkageMode?: 'filter' | 'highlight';
   datasetType?: DatasetType;
   datasetId?: number;
   datasetName?: string;
