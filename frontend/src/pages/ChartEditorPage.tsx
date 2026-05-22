@@ -7,6 +7,7 @@ import { ChartConfigPanel } from '@/features/charts/ChartConfigPanel';
 import { DashboardGovernancePanel } from '@/features/charts/DashboardGovernancePanel';
 import { DashboardFilterBar } from '@/features/charts/DashboardFilterBar';
 import { DesignerCanvas } from '@/features/charts/DesignerCanvas';
+import { validateChartDocument } from '@/features/charts/chartConfigValidation';
 import { chartTypeGroups } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
 import { useDesignerStore } from '@/store/designerStore';
@@ -98,6 +99,11 @@ export function ChartEditorPage() {
       return null;
     }
     const payload = toPayload();
+    const configErrors = validateChartDocument(payload.config);
+    if (configErrors.length) {
+      message.error(configErrors.slice(0, 3).join('；'));
+      return null;
+    }
     if (!chartId) {
       payload.workspaceId = workspaceId ?? undefined;
       payload.projectId = projectId ?? undefined;

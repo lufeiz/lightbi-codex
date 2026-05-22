@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -9,11 +10,18 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"lightbi/backend/internal/config"
 	"lightbi/backend/internal/middleware"
 	"lightbi/backend/internal/models"
 	"lightbi/backend/internal/services"
+)
+
+var (
+	errRefreshTokenExpired    = errors.New("refresh token expired")
+	errRefreshTokenReused     = errors.New("refresh token reused")
+	errRefreshUserUnavailable = errors.New("refresh user unavailable")
 )
 
 type AuthHandler struct {
@@ -182,30 +190,56 @@ func (h AuthHandler) Refresh(c *gin.Context) {
 	}
 
 	tokenHash := services.HashOpaqueToken(rawToken)
-	var stored models.RefreshToken
-	if err := h.DB.Where("user_id = ? AND token_hash = ? AND revoked_at IS NULL", claims.UserID, tokenHash).First(&stored).Error; err != nil {
-		Fail(c, http.StatusUnauthorized, "refresh token revoked")
-		return
-	}
-	if time.Now().After(stored.ExpiresAt) {
-		Fail(c, http.StatusUnauthorized, "refresh token expired")
-		return
-	}
-
 	var user models.User
-	if err := h.DB.First(&user, claims.UserID).Error; err != nil || user.Status != models.UserStatusActive {
-		Fail(c, http.StatusUnauthorized, "user not available")
+	var accessToken string
+	var refreshToken string
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		var stored models.RefreshToken
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("user_id = ? AND token_hash = ? AND revoked_at IS NULL", claims.UserID, tokenHash).
+			First(&stored).Error; err != nil {
+			return gorm.ErrRecordNotFound
+		}
+		if time.Now().After(stored.ExpiresAt) {
+			return errRefreshTokenExpired
+		}
+
+		if err := tx.First(&user, claims.UserID).Error; err != nil || user.Status != models.UserStatusActive {
+			return errRefreshUserUnavailable
+		}
+
+		now := time.Now()
+		result := tx.Model(&models.RefreshToken{}).
+			Where("id = ? AND revoked_at IS NULL", stored.ID).
+			Update("revoked_at", &now)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errRefreshTokenReused
+		}
+
+		nextAccessToken, nextRefreshToken, err := h.issueTokensWithDB(tx, user)
+		if err != nil {
+			return err
+		}
+		accessToken = nextAccessToken
+		refreshToken = nextRefreshToken
+		return nil
+	}); err != nil {
+		switch err {
+		case gorm.ErrRecordNotFound, errRefreshTokenReused:
+			Fail(c, http.StatusUnauthorized, "refresh token revoked")
+		case errRefreshTokenExpired:
+			Fail(c, http.StatusUnauthorized, "refresh token expired")
+		case errRefreshUserUnavailable:
+			Fail(c, http.StatusUnauthorized, "user not available")
+		default:
+			Fail(c, http.StatusInternalServerError, "issue token failed")
+		}
 		return
 	}
-
-	now := time.Now()
-	if err := h.DB.Model(&stored).Update("revoked_at", &now).Error; err != nil {
-		Fail(c, http.StatusInternalServerError, "revoke refresh token failed")
-		return
-	}
-
-	accessToken, refreshToken, err := h.issueTokens(user)
-	if err != nil {
+	if accessToken == "" || refreshToken == "" {
 		Fail(c, http.StatusInternalServerError, "issue token failed")
 		return
 	}
@@ -242,6 +276,10 @@ func (h AuthHandler) Me(c *gin.Context) {
 }
 
 func (h AuthHandler) issueTokens(user models.User) (string, string, error) {
+	return h.issueTokensWithDB(h.DB, user)
+}
+
+func (h AuthHandler) issueTokensWithDB(db *gorm.DB, user models.User) (string, string, error) {
 	accessToken, err := h.JWT.GenerateAccessToken(user)
 	if err != nil {
 		return "", "", err
@@ -255,7 +293,7 @@ func (h AuthHandler) issueTokens(user models.User) (string, string, error) {
 		TokenHash: services.HashOpaqueToken(refreshToken),
 		ExpiresAt: time.Now().Add(h.JWT.RefreshTTL()),
 	}
-	if err := h.DB.Create(&stored).Error; err != nil {
+	if err := db.Create(&stored).Error; err != nil {
 		return "", "", err
 	}
 	return accessToken, refreshToken, nil

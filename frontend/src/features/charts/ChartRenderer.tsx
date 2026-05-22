@@ -1,5 +1,6 @@
 import DOMPurify from 'dompurify';
-import type { RefObject } from 'react';
+import { Component } from 'react';
+import type { ReactNode, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { ChartWidget, DashboardFilters, DataRow } from '@/types/domain';
@@ -31,6 +32,14 @@ interface G2Mark {
   tooltip: (options: boolean | Record<string, unknown>) => G2Mark;
 }
 
+export function SafeChartRenderer(props: ChartRendererProps) {
+  return (
+    <ChartErrorBoundary widget={props.widget}>
+      <ChartRenderer {...props} />
+    </ChartErrorBoundary>
+  );
+}
+
 export function ChartRenderer({ widget, rows, filters }: ChartRendererProps) {
   const visibilityRef = useRef<HTMLDivElement | null>(null);
   const visible = useInViewport(visibilityRef);
@@ -55,8 +64,42 @@ export function ChartRenderer({ widget, rows, filters }: ChartRendererProps) {
   return <div ref={visibilityRef}><G2Renderer widget={widget} rows={filteredRows} /></div>;
 }
 
+class ChartErrorBoundary extends Component<{ widget: ChartWidget; children: ReactNode }, { error: string | null }> {
+  state: { error: string | null } = { error: null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : '图表渲染失败' };
+  }
+
+  componentDidCatch(error: unknown) {
+    console.error('chart render failed', error);
+  }
+
+  componentDidUpdate(prevProps: { widget: ChartWidget }) {
+    if (prevProps.widget !== this.props.widget && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="chart-renderer chart-render-error">
+          <div className="chart-title">{this.props.widget.config.title}</div>
+          <div className="chart-render-error-body">
+            <strong>图表渲染失败</strong>
+            <span>{this.state.error}</span>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -64,80 +107,93 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     }
     let destroyed = false;
     let runtime: G2Runtime | null = null;
+    setRuntimeError(null);
 
     void import('@antv/g2').then(({ Chart }) => {
       if (!containerRef.current || destroyed) {
         return;
       }
-      const chart = new Chart({
-        container: containerRef.current,
-        autoFit: true
-      });
-      runtime = chart as unknown as G2Runtime;
-      const rows = normalizedRows(widget, rawRows);
-      const primaryDimension = widget.config.dimensions[0] ?? 'category';
-      const seriesDimension = widget.config.dimensions[1];
-      const xField = displayFieldName(widget, primaryDimension);
-      const colorField = seriesDimension ? displayFieldName(widget, seriesDimension) : undefined;
-      const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
-      const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
-      const intervalRows = collapseIntervalRows(rows, xField, yField, colorField);
+      try {
+        const chart = new Chart({
+          container: containerRef.current,
+          autoFit: true
+        });
+        runtime = chart as unknown as G2Runtime;
+        const rows = normalizedRows(widget, rawRows);
+        const primaryDimension = widget.config.dimensions[0] ?? 'category';
+        const seriesDimension = widget.config.dimensions[1];
+        const xField = displayFieldName(widget, primaryDimension);
+        const colorField = seriesDimension ? displayFieldName(widget, seriesDimension) : undefined;
+        const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
+        const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
+        const intervalRows = collapseIntervalRows(rows, xField, yField, colorField);
 
-      let mark: G2Mark | null = null;
-      if (widget.type === 'line') {
-        mark = runtime.line() as unknown as G2Mark;
-        mark.data(intervalRows).encode('x', xField).encode('y', yField);
-        if (colorField) {
-          mark.encode('color', colorField);
+        let mark: G2Mark | null = null;
+        if (widget.type === 'line') {
+          mark = runtime.line() as unknown as G2Mark;
+          mark.data(intervalRows).encode('x', xField).encode('y', yField);
+          if (colorField) {
+            mark.encode('color', colorField);
+          }
         }
-      }
-      if (widget.type === 'column' || widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
-        mark = runtime.interval() as unknown as G2Mark;
-        mark.data(intervalRows).encode('x', xField).encode('y', yField);
-        if (colorField) {
-          mark.encode('color', colorField);
+        if (widget.type === 'column' || widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
+          mark = runtime.interval() as unknown as G2Mark;
+          mark.data(intervalRows).encode('x', xField).encode('y', yField);
+          if (colorField) {
+            mark.encode('color', colorField);
+          }
+          if (widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
+            mark.transform({ type: 'stackY' });
+          }
+          if (widget.type === 'percentStackedColumn') {
+            mark.transform({ type: 'normalizeY' });
+          }
         }
-        if (widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
-          mark.transform({ type: 'stackY' });
+        if (widget.type === 'bar' || widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
+          mark = runtime.interval() as unknown as G2Mark;
+          mark
+            .data(intervalRows)
+            .coordinate({ transform: [{ type: 'transpose' }] })
+            .encode('x', xField)
+            .encode('y', yField);
+          if (colorField) {
+            mark.encode('color', colorField);
+          }
+          if (widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
+            mark.transform({ type: 'stackY' });
+          }
+          if (widget.type === 'percentStackedBar') {
+            mark.transform({ type: 'normalizeY' });
+          }
         }
-        if (widget.type === 'percentStackedColumn') {
-          mark.transform({ type: 'normalizeY' });
+        if (widget.type === 'pie' || widget.type === 'donut') {
+          mark = runtime.interval() as unknown as G2Mark;
+          mark
+            .data(collapseIntervalRows(rows, xField, yField))
+            .coordinate({ type: 'theta', outerRadius: 0.82, innerRadius: widget.type === 'donut' ? 0.58 : 0 })
+            .transform({ type: 'stackY' })
+            .encode('y', yField)
+            .encode('color', xField);
         }
-      }
-      if (widget.type === 'bar' || widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
-        mark = runtime.interval() as unknown as G2Mark;
-        mark
-          .data(intervalRows)
-          .coordinate({ transform: [{ type: 'transpose' }] })
-          .encode('x', xField)
-          .encode('y', yField);
-        if (colorField) {
-          mark.encode('color', colorField);
-        }
-        if (widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
-          mark.transform({ type: 'stackY' });
-        }
-        if (widget.type === 'percentStackedBar') {
-          mark.transform({ type: 'normalizeY' });
-        }
-      }
-      if (widget.type === 'pie' || widget.type === 'donut') {
-        mark = runtime.interval() as unknown as G2Mark;
-        mark
-          .data(collapseIntervalRows(rows, xField, yField))
-          .coordinate({ type: 'theta', outerRadius: 0.82, innerRadius: widget.type === 'donut' ? 0.58 : 0 })
-          .transform({ type: 'stackY' })
-          .encode('y', yField)
-          .encode('color', xField);
-      }
 
-      if (mark) {
-        mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField] } : false);
-        if (widget.config.showLabel) {
-          mark.label({ text: labelField, style: { fontSize: widget.config.labelSize ?? 12 } });
+        if (mark) {
+          mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField] } : false);
+          if (widget.config.showLabel) {
+            mark.label({ text: labelField, style: { fontSize: widget.config.labelSize ?? 12 } });
+          }
+        }
+        runtime.render();
+      } catch (err) {
+        runtime?.destroy();
+        runtime = null;
+        if (!destroyed) {
+          setRuntimeError(err instanceof Error ? err.message : 'G2 图表渲染失败');
         }
       }
-      runtime.render();
+    }).catch((err: unknown) => {
+      if (!destroyed) {
+        setRuntimeError(err instanceof Error ? err.message : 'G2 图表加载失败');
+      }
     });
 
     return () => {
@@ -158,6 +214,10 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     widget.width
   ]);
 
+  if (runtimeError) {
+    return <ChartRenderError widget={widget} message={runtimeError} />;
+  }
+
   return (
     <div className={`chart-renderer ${chartThemeClass(widget)}`}>
       <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
@@ -168,6 +228,7 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
 
 function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const [runtimeError, setRuntimeError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -175,49 +236,62 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     }
     let destroyed = false;
     let sheet: { render: () => void; destroy: () => void } | null = null;
+    setRuntimeError(null);
 
     void import('@antv/s2').then(({ PivotSheet, TableSheet }) => {
       if (!containerRef.current || destroyed) {
         return;
       }
-      const rows = normalizedRows(widget, rawRows);
-      const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
-      const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
-      const dataCfg =
-        widget.type === 'detailTable'
-          ? {
-              fields: {
-                columns: [...dimensions, ...measures]
-              },
-              data: rows
+      try {
+        const rows = normalizedRows(widget, rawRows);
+        const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
+        const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
+        const dataCfg =
+          widget.type === 'detailTable'
+            ? {
+                fields: {
+                  columns: [...dimensions, ...measures]
+                },
+                data: rows
+              }
+            : {
+                fields: {
+                  rows: [dimensions[0]],
+                  columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? displayFieldName(widget, 'month')],
+                  values: measures,
+                  valueInCols: true
+                },
+                data: rows
+              };
+
+        const options: Record<string, unknown> = {
+          width: Math.max(widget.width - 32, 280),
+          height: Math.max(widget.height - 60, 200),
+          tooltip: { showTooltip: widget.config.showTooltip },
+          interaction: { hoverHighlight: true },
+          style: {
+            cellCfg: {
+              height: 34
             }
-          : {
-              fields: {
-                rows: [dimensions[0]],
-                columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? displayFieldName(widget, 'month')],
-                values: measures,
-                valueInCols: true
-              },
-              data: rows
-            };
+          },
+          showDefaultHeaderActionIcon: false,
+          frozen: widget.config.showScrollbar ? { rowHeader: true } : undefined
+        };
 
-      const options: Record<string, unknown> = {
-        width: Math.max(widget.width - 32, 280),
-        height: Math.max(widget.height - 60, 200),
-        tooltip: { showTooltip: widget.config.showTooltip },
-        interaction: { hoverHighlight: true },
-        style: {
-          cellCfg: {
-            height: 34
-          }
-        },
-        showDefaultHeaderActionIcon: false,
-        frozen: widget.config.showScrollbar ? { rowHeader: true } : undefined
-      };
-
-      const Sheet = widget.type === 'detailTable' ? TableSheet : PivotSheet;
-      sheet = new Sheet(containerRef.current, dataCfg, options as never);
-      sheet.render();
+        const Sheet = widget.type === 'detailTable' ? TableSheet : PivotSheet;
+        sheet = new Sheet(containerRef.current, dataCfg, options as never);
+        sheet.render();
+      } catch (err) {
+        sheet?.destroy();
+        sheet = null;
+        if (!destroyed) {
+          setRuntimeError(err instanceof Error ? err.message : 'S2 表格渲染失败');
+        }
+      }
+    }).catch((err: unknown) => {
+      if (!destroyed) {
+        setRuntimeError(err instanceof Error ? err.message : 'S2 表格加载失败');
+      }
     });
 
     return () => {
@@ -236,10 +310,26 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     widget.width
   ]);
 
+  if (runtimeError) {
+    return <ChartRenderError widget={widget} message={runtimeError} />;
+  }
+
   return (
     <div className={`chart-renderer ${chartThemeClass(widget)}`}>
       <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
       <div ref={containerRef} className="s2-canvas" />
+    </div>
+  );
+}
+
+function ChartRenderError({ widget, message }: { widget: ChartWidget; message: string }) {
+  return (
+    <div className="chart-renderer chart-render-error">
+      <div className="chart-title" style={chartTitleStyle(widget)}>{widget.config.title}</div>
+      <div className="chart-render-error-body">
+        <strong>图表渲染失败</strong>
+        <span>{message}</span>
+      </div>
     </div>
   );
 }

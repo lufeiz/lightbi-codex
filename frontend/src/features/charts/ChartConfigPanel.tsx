@@ -83,6 +83,7 @@ function SelectedChartConfigPanel({
   const [datasets, setDatasets] = useState<DatasetSummary[]>([]);
   const [datasetFields, setDatasetFields] = useState<DatasetFieldSet | null>(null);
   const [datasetError, setDatasetError] = useState<string | null>(null);
+  const [queryError, setQueryError] = useState<string | null>(null);
   const [updatingPreview, setUpdatingPreview] = useState(false);
   const runtimeRows = useDesignerStore((state) => state.runtimeRows[selectedWidget.id] ?? EMPTY_RUNTIME_ROWS);
   const setWidgetRows = useDesignerStore((state) => state.setWidgetRows);
@@ -110,12 +111,14 @@ function SelectedChartConfigPanel({
       setDatasets([]);
       setDatasetFields(null);
       setDatasetError(null);
+      setQueryError(null);
       return;
     }
     let active = true;
     setDatasets([]);
     setDatasetFields(null);
     setDatasetError(null);
+    setQueryError(null);
     void api
       .datasets(datasetType, { workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined })
       .then((items) => {
@@ -140,11 +143,13 @@ function SelectedChartConfigPanel({
     if (isTextWidget || !datasetId) {
       setDatasetFields(null);
       setDatasetError(null);
+      setQueryError(null);
       return;
     }
     let active = true;
     setDatasetFields(null);
     setDatasetError(null);
+    setQueryError(null);
     void api
       .datasetFields(datasetId)
       .then((fields) => {
@@ -211,6 +216,7 @@ function SelectedChartConfigPanel({
       return;
     }
     setUpdatingPreview(true);
+    setQueryError(null);
     try {
       const query = buildQueryConfig(selectedWidget.config);
       const result = await api.queryDataset(datasetId, query);
@@ -218,7 +224,9 @@ function SelectedChartConfigPanel({
       updateWidgetConfig(selectedWidget.id, { query });
       message.success('图表数据已更新');
     } catch (err) {
-      message.error(err instanceof Error ? err.message : '更新图表数据失败');
+      const nextError = err instanceof Error ? err.message : '更新图表数据失败';
+      setQueryError(nextError);
+      message.error(nextError);
     } finally {
       setUpdatingPreview(false);
     }
@@ -244,6 +252,7 @@ function SelectedChartConfigPanel({
       fieldLabels: {}
     });
     setWidgetRows(selectedWidget.id, []);
+    setQueryError(null);
   };
 
   const changeDataset = (datasetId?: number) => {
@@ -252,6 +261,7 @@ function SelectedChartConfigPanel({
     form.setFieldsValue({ datasetId, datasetName, dimensions: [], measures: [], query: emptyQuery, fieldLabels: {} });
     updateWidgetConfig(selectedWidget.id, { datasetId, datasetName, dimensions: [], measures: [], query: emptyQuery, fieldLabels: {} });
     setWidgetRows(selectedWidget.id, []);
+    setQueryError(null);
   };
 
   const canUpdatePreview = Boolean(
@@ -346,6 +356,7 @@ function SelectedChartConfigPanel({
                           已加载 {runtimeRows.length} 条数据
                         </Typography.Text>
                       ) : null}
+                      {queryError && <Alert className="inline-alert preview-query-alert" type="error" showIcon message="数据查询失败" description={queryError} />}
                     </>
                   )
                 },

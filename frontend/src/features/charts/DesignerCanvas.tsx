@@ -1,9 +1,8 @@
-import { Graph } from '@antv/x6';
 import { Empty } from 'antd';
 import type { PointerEvent } from 'react';
 import { useEffect, useRef } from 'react';
 
-import { ChartRenderer } from '@/features/charts/ChartRenderer';
+import { SafeChartRenderer } from '@/features/charts/ChartRenderer';
 import { useDesignerStore } from '@/store/designerStore';
 import type { ChartWidget } from '@/types/domain';
 
@@ -26,23 +25,34 @@ export function DesignerCanvas() {
     if (!x6Ref.current) {
       return undefined;
     }
-    const graph = new Graph({
-      container: x6Ref.current,
-      grid: {
-        size: 16,
-        visible: true,
-        type: 'mesh',
-        args: { color: '#d7dce5', thickness: 1 }
-      },
-      interacting: false,
-      panning: true,
-      mousewheel: {
-        enabled: true,
-        modifiers: ['ctrl', 'meta']
+    let disposed = false;
+    let graph: { dispose: () => void } | null = null;
+    const container = x6Ref.current;
+
+    void import('@antv/x6').then(({ Graph }) => {
+      if (disposed) {
+        return;
       }
+      graph = new Graph({
+        container,
+        grid: {
+          size: 16,
+          visible: true,
+          type: 'mesh',
+          args: { color: '#d7dce5', thickness: 1 }
+        },
+        interacting: false,
+        panning: true,
+        mousewheel: {
+          enabled: true,
+          modifiers: ['ctrl', 'meta']
+        }
+      });
     });
+
     return () => {
-      graph.dispose();
+      disposed = true;
+      graph?.dispose();
     };
   }, []);
 
@@ -113,7 +123,7 @@ export function DesignerCanvas() {
             style={{ left: widget.x, top: widget.y, width: widget.width, height: widget.height }}
             onPointerDown={(event) => startDrag(event, widget)}
           >
-            <ChartRenderer widget={widget} rows={runtimeRows[widget.id]} filters={filters} />
+            <SafeChartRenderer widget={widget} rows={runtimeRows[widget.id]} filters={filters} />
             <div className="resize-handle" onPointerDown={(event) => startResize(event, widget)} />
           </div>
         ))}

@@ -42,6 +42,32 @@ test('login, list, publish viewer page and rollback path are wired', async ({ pa
   await expect(page.getByText('v1')).toBeVisible();
 });
 
+test('editor can add a widget, configure dataset, update preview and save', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/charts/new');
+  await expect(page.getByPlaceholder('请输入仪表盘名称')).toBeVisible();
+
+  await page.getByRole('button', { name: '柱状图', exact: true }).click();
+  await expect(page.getByText('配置数据源后点击更新图表')).toBeVisible();
+
+  await page.locator('.data-source-module .ant-select').first().click();
+  await page.getByTitle('标准数据集').click();
+  await page.locator('.data-source-module .ant-select').nth(1).click();
+  await page.getByTitle(/销售订单/).click();
+
+  await page.locator('.field-token-dimensions', { hasText: '区域' }).dblclick();
+  await page.locator('.field-token-measures', { hasText: '销售额' }).dblclick();
+  await page.getByRole('button', { name: /更新图表/ }).click();
+
+  await expect(page.getByText('已加载 2 条数据')).toBeVisible();
+  await page.getByRole('button', { name: /保存$/ }).click();
+  await expect(page).toHaveURL(/\/charts\/2\/edit$/);
+});
+
 function mockResponse(path: string, method: string): { status?: number; message?: string; body?: unknown } {
   if (path === '/auth/refresh') {
     return { body: { accessToken: 'test-token', tokenType: 'Bearer', expiresIn: 1800, user } };
@@ -67,11 +93,59 @@ function mockResponse(path: string, method: string): { status?: number; message?
   if (path === '/charts/creators') {
     return { body: [user] };
   }
+  if (path === '/charts' && method === 'POST') {
+    return { body: chart(2, 'draft') };
+  }
   if (path === '/charts') {
     return { body: { items: [chart()], total: 1, page: 1, pageSize: 12 } };
   }
   if (path === '/charts/1') {
     return { body: chart() };
+  }
+  if (path === '/charts/2') {
+    return { body: chart(2, 'draft') };
+  }
+  if (path === '/datasets') {
+    return {
+      body: [
+        {
+          id: 1,
+          workspaceId: 1,
+          projectId: 1,
+          name: '销售订单',
+          type: 'standard',
+          sourceName: '标准数据集',
+          createdAt: now(),
+          updatedAt: now()
+        }
+      ]
+    };
+  }
+  if (path === '/datasets/1/fields') {
+    return {
+      body: {
+        dimensions: [
+          { name: 'region', label: '区域', type: 'string' },
+          { name: 'month', label: '月份', type: 'string' }
+        ],
+        measures: [
+          { name: 'revenue', label: '销售额', type: 'number' },
+          { name: 'profit', label: '利润', type: 'number' }
+        ]
+      }
+    };
+  }
+  if (path === '/datasets/1/query' && method === 'POST') {
+    return {
+      body: {
+        rows: [
+          { region: '华东', revenue: 120 },
+          { region: '华南', revenue: 96 }
+        ],
+        total: 2,
+        fields: []
+      }
+    };
   }
   if (path === '/dashboards/1/published') {
     return { body: { chart: chart(), version: version(), runtimeRows: { widget_1: [{ month: '1月', revenue: 120 }] }, embed: false } };
@@ -88,16 +162,16 @@ function mockResponse(path: string, method: string): { status?: number; message?
   return { body: {} };
 }
 
-function chart() {
+function chart(id = 1, status = 'published') {
   return {
-    id: 1,
+    id,
     workspaceId: 1,
     projectId: 1,
     ownerId: 1,
     name: '销售总览',
     description: '已发布仪表盘',
     type: 'line',
-    status: 'published',
+    status,
     groupId: null,
     group: null,
     config: {

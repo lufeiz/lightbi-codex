@@ -1,6 +1,6 @@
 import { Empty, Typography } from 'antd';
 
-import { ChartRenderer } from '@/features/charts/ChartRenderer';
+import { SafeChartRenderer } from '@/features/charts/ChartRenderer';
 import type { ChartAsset, DataRow } from '@/types/domain';
 
 interface DashboardViewProps {
@@ -28,7 +28,7 @@ export function DashboardView({ chart, runtimeRows = {}, embed = false }: Dashbo
         {widgets.length === 0 && <Empty description="暂无图表" />}
         {widgets.map((widget) => (
           <article key={widget.id} className="published-widget" style={{ left: widget.x, top: widget.y, width: widget.width, height: widget.height }}>
-            <ChartRenderer widget={widget} rows={runtimeRows[widget.id]} filters={chart.config.filters} />
+            <SafeChartRenderer widget={widget} rows={runtimeRows[widget.id]} filters={chart.config.filters} />
           </article>
         ))}
       </section>

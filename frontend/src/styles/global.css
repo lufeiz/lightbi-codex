@@ -747,6 +747,27 @@ a {
   min-height: 0;
 }
 
+.chart-render-error {
+  border: 1px solid #ffd8bf;
+  background: #fff7f0;
+}
+
+.chart-render-error-body {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 8px;
+  place-content: center;
+  color: #9f3412;
+  text-align: center;
+}
+
+.chart-render-error-body span {
+  max-width: 320px;
+  color: #b45309;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .text-widget-renderer {
   justify-content: center;
   padding: 18px;
@@ -1375,6 +1396,10 @@ a {
   display: block;
   margin-top: 10px;
   text-align: center;
+}
+
+.preview-query-alert {
+  margin-top: 12px;
 }
 
 .header-nav-link {

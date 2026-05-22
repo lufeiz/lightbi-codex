@@ -11,4 +11,6 @@ tmp/
 frontend/node_modules/
 frontend/dist/
 frontend/.npm-cache/
+frontend/test-results/
+frontend/playwright-report/
 backend/tmp/

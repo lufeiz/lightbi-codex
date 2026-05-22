@@ -3,7 +3,7 @@ import { Alert, Button, Card, Form, Input, Radio, Tabs, Typography } from 'antd'
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 
-import loginBackground from '@/assets/login-background.png';
+import loginBackground from '@/assets/login-background.jpg';
 import { useAuthStore } from '@/store/authStore';
 import type { LoginPayload, RegisterPayload } from '@/types/domain';
 
