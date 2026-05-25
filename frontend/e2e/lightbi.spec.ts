@@ -64,6 +64,8 @@ test('editor can add a widget, configure dataset, update preview and save', asyn
   await page.getByRole('button', { name: /更新图表/ }).click();
 
   await expect(page.getByText('已加载 2 条数据')).toBeVisible();
+  const widgetScreenshot = await page.locator('.chart-widget').screenshot();
+  expect(widgetScreenshot.length).toBeGreaterThan(1000);
   await page.getByRole('button', { name: /保存$/ }).click();
   await expect(page).toHaveURL(/\/charts\/2\/edit$/);
 });

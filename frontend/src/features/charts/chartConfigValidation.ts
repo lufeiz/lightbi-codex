@@ -1,11 +1,11 @@
 import type { ChartDocument, ChartType, ChartWidget } from '@/types/domain';
-import { chartTypeLabels } from '@/types/domain';
+import { chartDefinitionMap } from '@/features/charts/chartUtils';
 
 const MAX_WIDGETS = 80;
 const MAX_FIELD_REFS = 20;
 const MAX_FIELD_NAME_SIZE = 80;
 const MAX_TEXT_SIZE = 20000;
-const validChartTypes = new Set<ChartType>(Object.keys(chartTypeLabels) as ChartType[]);
+const validChartTypes = new Set<ChartType>(chartDefinitionMap.keys());
 
 export function validateChartDocument(document: ChartDocument): string[] {
   const errors: string[] = [];

@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/datatypes"
@@ -72,26 +74,57 @@ type datasetFieldMeta struct {
 	Role  string `json:"role"`
 }
 
-func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, datasetID uint, req DatasetQueryRequest) (DatasetQueryResponse, error) {
+var (
+	datasetQueryGateMu sync.Mutex
+	datasetQueryGates  = map[int]chan struct{}{}
+
+	datasetQueryLogPruneMu    sync.Mutex
+	datasetQueryLogLastPruned time.Time
+)
+
+var forbiddenSQLKeywordPattern = regexp.MustCompile(`(?i)\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|call|execute)\b`)
+
+const (
+	datasetQueryLogWriteTimeout         = 2 * time.Second
+	datasetQueryLogPruneInterval        = time.Hour
+	defaultDatasetQueryLogRetentionDays = 30
+)
+
+func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, datasetID uint, req DatasetQueryRequest) (response DatasetQueryResponse, err error) {
+	start := time.Now()
 	var dataset models.Dataset
 	if err := appDB.Preload("DataSource").First(&dataset, datasetID).Error; err != nil {
 		return DatasetQueryResponse{}, err
 	}
+	var normalizedReq DatasetQueryRequest
+	var cacheKey string
+	defer func() {
+		if normalizedReq.Limit > 0 || len(normalizedReq.Dimensions) > 0 || len(normalizedReq.Metrics) > 0 {
+			enqueueDatasetQueryLog(appDB, cfg.QueryLogRetentionDays, dataset, normalizedReq, cacheKey, response, err, time.Since(start))
+		}
+	}()
 	normalizedReq, fields, err := normalizeDatasetQueryRequest(dataset, req)
 	if err != nil {
 		return DatasetQueryResponse{}, err
 	}
 
-	cacheKey, err := datasetQueryCacheKey(dataset.ID, normalizedReq)
+	cacheKey, err = datasetQueryCacheKey(dataset.ID, normalizedReq)
 	if err != nil {
 		return DatasetQueryResponse{}, err
 	}
 	if dataset.CacheTTL > 0 {
 		if cached, ok := loadDatasetQueryCache(appDB, dataset.ID, cacheKey); ok {
 			cached.Cached = true
+			response = cached
 			return cached, nil
 		}
 	}
+
+	release, err := acquireDatasetQuerySlot(ctx, cfg.QueryMaxConcurrent)
+	if err != nil {
+		return DatasetQueryResponse{}, err
+	}
+	defer release()
 
 	timeout := dataset.QueryTimeout
 	if timeout <= 0 {
@@ -100,7 +133,6 @@ func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config,
 	queryCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	var response DatasetQueryResponse
 	if dataset.Type == models.DatasetTypeSQL && dataset.DataSource != nil {
 		response, err = executeSQLDatasetQuery(queryCtx, cfg, dataset, normalizedReq, fields)
 	} else {
@@ -117,6 +149,95 @@ func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config,
 		_ = saveDatasetQueryCache(appDB, dataset.ID, cacheKey, response, expiresAt)
 	}
 	return response, nil
+}
+
+func acquireDatasetQuerySlot(ctx context.Context, maxConcurrent int) (func(), error) {
+	if maxConcurrent <= 0 {
+		maxConcurrent = 8
+	}
+	datasetQueryGateMu.Lock()
+	gate := datasetQueryGates[maxConcurrent]
+	if gate == nil {
+		gate = make(chan struct{}, maxConcurrent)
+		datasetQueryGates[maxConcurrent] = gate
+	}
+	datasetQueryGateMu.Unlock()
+
+	select {
+	case gate <- struct{}{}:
+		return func() { <-gate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func enqueueDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), datasetQueryLogWriteTimeout)
+		defer cancel()
+		_ = writeDatasetQueryLog(appDB.WithContext(ctx), retentionDays, dataset, req, queryHash, response, queryErr, duration)
+	}()
+}
+
+func writeDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) error {
+	status := "success"
+	errorMessage := ""
+	if queryErr != nil {
+		status = "failed"
+		errorMessage = queryErr.Error()
+		if len(errorMessage) > 500 {
+			errorMessage = errorMessage[:500]
+		}
+	}
+	requestSummary, _ := json.Marshal(map[string]any{
+		"dimensions": req.Dimensions,
+		"metrics":    req.Metrics,
+		"filters":    len(req.Filters),
+		"sorts":      req.Sorts,
+		"topN":       req.TopN,
+	})
+	if err := appDB.Create(&models.DatasetQueryLog{
+		DatasetID:      dataset.ID,
+		WorkspaceID:    dataset.WorkspaceID,
+		ProjectID:      dataset.ProjectID,
+		DataSourceID:   dataset.DataSourceID,
+		Status:         status,
+		Cached:         response.Cached,
+		DurationMs:     duration.Milliseconds(),
+		RowCount:       len(response.Rows),
+		Limit:          req.Limit,
+		QueryHash:      queryHash,
+		ErrorMessage:   errorMessage,
+		RequestSummary: datatypes.JSON(requestSummary),
+	}).Error; err != nil {
+		return err
+	}
+	return maybePruneDatasetQueryLogs(appDB, retentionDays, time.Now())
+}
+
+func maybePruneDatasetQueryLogs(db *gorm.DB, retentionDays int, now time.Time) error {
+	retentionDays = effectiveDatasetQueryLogRetentionDays(retentionDays)
+	datasetQueryLogPruneMu.Lock()
+	if !datasetQueryLogLastPruned.IsZero() && now.Sub(datasetQueryLogLastPruned) < datasetQueryLogPruneInterval {
+		datasetQueryLogPruneMu.Unlock()
+		return nil
+	}
+	datasetQueryLogLastPruned = now
+	datasetQueryLogPruneMu.Unlock()
+	return pruneDatasetQueryLogs(db, retentionDays, now)
+}
+
+func pruneDatasetQueryLogs(db *gorm.DB, retentionDays int, now time.Time) error {
+	retentionDays = effectiveDatasetQueryLogRetentionDays(retentionDays)
+	cutoff := now.AddDate(0, 0, -retentionDays)
+	return db.Where("created_at < ?", cutoff).Delete(&models.DatasetQueryLog{}).Error
+}
+
+func effectiveDatasetQueryLogRetentionDays(retentionDays int) int {
+	if retentionDays <= 0 {
+		return defaultDatasetQueryLogRetentionDays
+	}
+	return retentionDays
 }
 
 func RefreshDatasetQueryCache(appDB *gorm.DB, datasetID uint) error {
@@ -381,10 +502,8 @@ func NormalizeReadOnlySQL(query string) (string, error) {
 	if strings.Contains(query, ";") || strings.Contains(lower, "--") || strings.Contains(lower, "/*") {
 		return "", errors.New("dataset SQL must be a single read-only statement")
 	}
-	for _, keyword := range []string{" insert ", " update ", " delete ", " drop ", " alter ", " truncate ", " create ", " grant ", " revoke ", " call ", " execute "} {
-		if strings.Contains(" "+lower+" ", keyword) {
-			return "", errors.New("dataset SQL contains a forbidden keyword")
-		}
+	if forbiddenSQLKeywordPattern.MatchString(query) {
+		return "", errors.New("dataset SQL contains a forbidden keyword")
 	}
 	return query, nil
 }

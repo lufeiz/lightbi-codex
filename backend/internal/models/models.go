@@ -140,6 +140,29 @@ type DatasetQueryCache struct {
 	UpdatedAt time.Time      `json:"updatedAt"`
 }
 
+type DatasetQueryLog struct {
+	ID             uint           `gorm:"primaryKey" json:"id"`
+	DatasetID      uint           `gorm:"not null;index" json:"datasetId"`
+	WorkspaceID    uint           `gorm:"not null;default:0;index" json:"workspaceId"`
+	ProjectID      uint           `gorm:"not null;default:0;index" json:"projectId"`
+	DataSourceID   *uint          `gorm:"index" json:"dataSourceId,omitempty"`
+	Status         string         `gorm:"size:24;not null;index" json:"status"`
+	Cached         bool           `gorm:"not null;default:false" json:"cached"`
+	DurationMs     int64          `gorm:"not null;default:0" json:"durationMs"`
+	RowCount       int            `gorm:"not null;default:0" json:"rowCount"`
+	Limit          int            `gorm:"not null;default:0" json:"limit"`
+	QueryHash      string         `gorm:"size:80;not null;index" json:"queryHash"`
+	ErrorMessage   string         `gorm:"size:500" json:"errorMessage"`
+	RequestSummary datatypes.JSON `gorm:"type:json" json:"requestSummary"`
+	CreatedAt      time.Time      `json:"createdAt"`
+}
+
+type SchemaMigration struct {
+	Version   string    `gorm:"size:80;primaryKey" json:"version"`
+	Name      string    `gorm:"size:160;not null" json:"name"`
+	AppliedAt time.Time `gorm:"not null;index" json:"appliedAt"`
+}
+
 type RefreshToken struct {
 	ID        uint       `gorm:"primaryKey" json:"id"`
 	UserID    uint       `gorm:"not null;index" json:"userId"`

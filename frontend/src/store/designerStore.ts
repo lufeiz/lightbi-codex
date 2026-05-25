@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import { getChartDefinition } from '@/features/charts/chartUtils';
 import type { ChartDocument, ChartMutationPayload, ChartStatus, ChartType, ChartWidget, DashboardDimensionFilter, DashboardFilters, DataRow } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
@@ -173,17 +174,17 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
 }));
 
 function createWidget(type: ChartType, x: number, y: number): ChartWidget {
-  const isTable = type.includes('Table');
-  const isText = type === 'text' || type === 'richText';
-  const isMetric = type === 'metricCard' || type === 'metricTrendCard';
+  const definition = getChartDefinition(type);
+  const isTable = definition.renderer === 's2';
+  const isText = definition.renderer === 'text';
 
   return {
     id: safeId(),
     type,
     x,
     y,
-    width: isMetric ? 320 : isText ? 360 : isTable ? 520 : 440,
-    height: isMetric ? (type === 'metricTrendCard' ? 220 : 180) : isText ? 180 : isTable ? 320 : 300,
+    width: definition.defaultWidth,
+    height: definition.defaultHeight,
     config: {
       title: chartTypeLabels[type],
       showLabel: true,
@@ -257,14 +258,14 @@ function normalizeDimensionControls(filters: LegacyDashboardFilters, widgets: Ch
   }
 
   if (filters.chartDimensionFilters) {
-    return Object.values(filters.chartDimensionFilters).flatMap((items) =>
+    return Object.entries(filters.chartDimensionFilters).flatMap(([chartId, items]) =>
       Array.isArray(items)
       ? items
           .filter((filter) => typeof filter.field === 'string' && filter.field.length > 0)
           .map((filter) => ({
             id: createFilterId(),
             label: '维度',
-            chartIds: [],
+            chartIds: [String(chartId)],
             field: filter.field,
             fieldsByChart: {},
             values: Array.isArray(filter.values) ? filter.values.map(String) : []

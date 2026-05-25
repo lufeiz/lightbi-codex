@@ -3,6 +3,7 @@ import type { PointerEvent } from 'react';
 import { useEffect, useRef } from 'react';
 
 import { SafeChartRenderer } from '@/features/charts/ChartRenderer';
+import { recordPerformanceMetric } from '@/features/charts/chartUtils';
 import { useDesignerStore } from '@/store/designerStore';
 import type { ChartWidget } from '@/types/domain';
 
@@ -76,6 +77,7 @@ export function DesignerCanvas() {
     event.stopPropagation();
     selectWidget(widget.id);
     const start = { x: event.clientX, y: event.clientY, widgetX: widget.x, widgetY: widget.y };
+    const interactionStart = performance.now();
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       updateWidget(widget.id, {
@@ -86,6 +88,7 @@ export function DesignerCanvas() {
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
+      recordPerformanceMetric('EDITOR_INTERACTION', performance.now() - interactionStart);
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
@@ -96,6 +99,7 @@ export function DesignerCanvas() {
     event.stopPropagation();
     selectWidget(widget.id);
     const start = { x: event.clientX, y: event.clientY, width: widget.width, height: widget.height };
+    const interactionStart = performance.now();
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
       updateWidget(widget.id, {
@@ -106,6 +110,7 @@ export function DesignerCanvas() {
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
+      recordPerformanceMetric('EDITOR_INTERACTION', performance.now() - interactionStart);
     };
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);

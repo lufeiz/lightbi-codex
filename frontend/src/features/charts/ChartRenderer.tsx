@@ -3,6 +3,7 @@ import { Component } from 'react';
 import type { ReactNode, RefObject } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { recordPerformanceMetric } from '@/features/charts/chartUtils';
 import type { ChartWidget, DashboardFilters, DataRow } from '@/types/domain';
 
 interface ChartRendererProps {
@@ -34,7 +35,7 @@ interface G2Mark {
 
 export function SafeChartRenderer(props: ChartRendererProps) {
   return (
-    <ChartErrorBoundary widget={props.widget}>
+    <ChartErrorBoundary widget={props.widget} rows={props.rows} filters={props.filters}>
       <ChartRenderer {...props} />
     </ChartErrorBoundary>
   );
@@ -64,7 +65,11 @@ export function ChartRenderer({ widget, rows, filters }: ChartRendererProps) {
   return <div ref={visibilityRef}><G2Renderer widget={widget} rows={filteredRows} /></div>;
 }
 
-class ChartErrorBoundary extends Component<{ widget: ChartWidget; children: ReactNode }, { error: string | null }> {
+interface ChartErrorBoundaryProps extends ChartRendererProps {
+  children: ReactNode;
+}
+
+class ChartErrorBoundary extends Component<ChartErrorBoundaryProps, { error: string | null }> {
   state: { error: string | null } = { error: null };
 
   static getDerivedStateFromError(error: unknown) {
@@ -75,8 +80,8 @@ class ChartErrorBoundary extends Component<{ widget: ChartWidget; children: Reac
     console.error('chart render failed', error);
   }
 
-  componentDidUpdate(prevProps: { widget: ChartWidget }) {
-    if (prevProps.widget !== this.props.widget && this.state.error) {
+  componentDidUpdate(prevProps: ChartErrorBoundaryProps) {
+    if (this.state.error && chartRenderInputsChanged(prevProps, this.props)) {
       this.setState({ error: null });
     }
   }
@@ -97,6 +102,10 @@ class ChartErrorBoundary extends Component<{ widget: ChartWidget; children: Reac
   }
 }
 
+function chartRenderInputsChanged(prevProps: ChartErrorBoundaryProps, nextProps: ChartErrorBoundaryProps): boolean {
+  return prevProps.widget !== nextProps.widget || prevProps.rows !== nextProps.rows || prevProps.filters !== nextProps.filters;
+}
+
 function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
@@ -114,6 +123,7 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         return;
       }
       try {
+        const renderStart = performance.now();
         const chart = new Chart({
           container: containerRef.current,
           autoFit: true
@@ -183,6 +193,7 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
           }
         }
         runtime.render();
+        recordPerformanceMetric('CHART_RENDER', performance.now() - renderStart);
       } catch (err) {
         runtime?.destroy();
         runtime = null;
@@ -243,6 +254,7 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         return;
       }
       try {
+        const renderStart = performance.now();
         const rows = normalizedRows(widget, rawRows);
         const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
         const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
@@ -281,6 +293,7 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         const Sheet = widget.type === 'detailTable' ? TableSheet : PivotSheet;
         sheet = new Sheet(containerRef.current, dataCfg, options as never);
         sheet.render();
+        recordPerformanceMetric('CHART_RENDER', performance.now() - renderStart);
       } catch (err) {
         sheet?.destroy();
         sheet = null;

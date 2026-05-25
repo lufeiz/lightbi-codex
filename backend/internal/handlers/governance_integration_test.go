@@ -86,6 +86,77 @@ func TestProjectObjectAccessIsScoped(t *testing.T) {
 	}
 }
 
+func TestProjectPermissionMatrix(t *testing.T) {
+	engine, _, tokens := setupGovernanceRouter(t)
+
+	createResp := requestJSON(engine, http.MethodPost, "/api/charts", tokens.editor, map[string]any{
+		"name":      "权限矩阵",
+		"type":      "line",
+		"projectId": 1,
+		"config":    json.RawMessage(validChartConfig()),
+	})
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("editor create chart status = %d body=%s", createResp.Code, createResp.Body.String())
+	}
+	chartID := responseID(t, createResp.Body.Bytes())
+
+	viewerDenied := []struct {
+		name    string
+		method  string
+		path    string
+		payload any
+	}{
+		{
+			name:   "create chart",
+			method: http.MethodPost,
+			path:   "/api/charts",
+			payload: map[string]any{
+				"name":      "viewer chart",
+				"type":      "line",
+				"projectId": 1,
+				"config":    json.RawMessage(validChartConfig()),
+			},
+		},
+		{
+			name:   "update chart",
+			method: http.MethodPut,
+			path:   "/api/charts/" + strconv.Itoa(chartID),
+			payload: map[string]any{
+				"name":   "viewer update",
+				"type":   "line",
+				"config": json.RawMessage(validChartConfig()),
+			},
+		},
+		{name: "delete chart", method: http.MethodDelete, path: "/api/charts/" + strconv.Itoa(chartID)},
+		{name: "publish chart", method: http.MethodPost, path: "/api/charts/" + strconv.Itoa(chartID) + "/publish"},
+		{name: "create group", method: http.MethodPost, path: "/api/chart-groups", payload: map[string]any{"name": "viewer group", "projectId": 1}},
+		{name: "create tag", method: http.MethodPost, path: "/api/chart-tags", payload: map[string]any{"name": "viewer tag", "projectId": 1, "color": "#1677ff"}},
+		{
+			name:    "create data source",
+			method:  http.MethodPost,
+			path:    "/api/data-sources",
+			payload: map[string]any{"projectId": 1, "name": "viewer ds", "type": "mysql", "host": "127.0.0.1", "port": 3306, "databaseName": "bi", "username": "readonly", "password": "secret"},
+		},
+		{
+			name:    "create dataset",
+			method:  http.MethodPost,
+			path:    "/api/datasets",
+			payload: map[string]any{"projectId": 1, "name": "viewer dataset", "type": "standard", "sourceName": "mock", "dimensions": []any{}, "measures": []any{}, "rows": []any{}},
+		},
+	}
+
+	for _, item := range viewerDenied {
+		resp := requestJSON(engine, item.method, item.path, tokens.viewer, item.payload)
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("%s: expected viewer forbidden, got %d body=%s", item.name, resp.Code, resp.Body.String())
+		}
+	}
+
+	if resp := requestJSON(engine, http.MethodGet, "/api/charts/"+strconv.Itoa(chartID), tokens.viewer, nil); resp.Code != http.StatusOK {
+		t.Fatalf("expected viewer read to be allowed, got %d body=%s", resp.Code, resp.Body.String())
+	}
+}
+
 type governanceTokens struct {
 	admin  string
 	editor string
@@ -109,6 +180,7 @@ func setupGovernanceRouter(t *testing.T) (*gin.Engine, *gorm.DB, governanceToken
 		&models.DataSource{},
 		&models.Dataset{},
 		&models.DatasetQueryCache{},
+		&models.DatasetQueryLog{},
 		&models.ChartGroup{},
 		&models.ChartTag{},
 		&models.Chart{},
@@ -116,6 +188,7 @@ func setupGovernanceRouter(t *testing.T) (*gin.Engine, *gorm.DB, governanceToken
 		&models.AuditLog{},
 		&models.DashboardShareLink{},
 		&models.DashboardSubscription{},
+		&models.SchemaMigration{},
 	); err != nil {
 		t.Fatalf("migrate sqlite: %v", err)
 	}
@@ -150,14 +223,15 @@ func setupGovernanceRouter(t *testing.T) (*gin.Engine, *gorm.DB, governanceToken
 	}
 
 	cfg := config.Config{
-		AppEnv:           "test",
-		JWTAccessSecret:  "test-access-secret",
-		JWTRefreshSecret: "test-refresh-secret",
-		AccessTTL:        time.Hour,
-		RefreshTTL:       time.Hour,
-		CORSOrigins:      []string{"http://localhost:3000"},
-		DataSourceKey:    "test-data-source-key",
-		RegisterMode:     "disabled",
+		AppEnv:             "test",
+		JWTAccessSecret:    "test-access-secret",
+		JWTRefreshSecret:   "test-refresh-secret",
+		AccessTTL:          time.Hour,
+		RefreshTTL:         time.Hour,
+		CORSOrigins:        []string{"http://localhost:3000"},
+		DataSourceKey:      "test-data-source-key",
+		RegisterMode:       "disabled",
+		QueryMaxConcurrent: 8,
 	}
 	jwt := services.NewJWTService(cfg)
 	adminToken, _ := jwt.GenerateAccessToken(admin)

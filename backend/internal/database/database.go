@@ -3,6 +3,7 @@ package database
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"gorm.io/datatypes"
 	"gorm.io/driver/mysql"
@@ -28,6 +29,7 @@ func Migrate(db *gorm.DB) error {
 		&models.DataSource{},
 		&models.Dataset{},
 		&models.DatasetQueryCache{},
+		&models.DatasetQueryLog{},
 		&models.ChartGroup{},
 		&models.ChartTag{},
 		&models.Chart{},
@@ -35,10 +37,58 @@ func Migrate(db *gorm.DB) error {
 		&models.AuditLog{},
 		&models.DashboardShareLink{},
 		&models.DashboardSubscription{},
+		&models.SchemaMigration{},
 	); err != nil {
 		return err
 	}
+	if err := RunVersionedMigrations(db); err != nil {
+		return err
+	}
 	return EnsureGovernanceDefaults(db)
+}
+
+type versionedMigration struct {
+	Version string
+	Name    string
+	Run     func(*gorm.DB) error
+}
+
+var versionedMigrations = []versionedMigration{
+	{
+		Version: "2026052501",
+		Name:    "record baseline schema after automigrate",
+		Run: func(db *gorm.DB) error {
+			return nil
+		},
+	},
+}
+
+func RunVersionedMigrations(db *gorm.DB) error {
+	if err := db.AutoMigrate(&models.SchemaMigration{}); err != nil {
+		return err
+	}
+	for _, migration := range versionedMigrations {
+		var count int64
+		if err := db.Model(&models.SchemaMigration{}).Where("version = ?", migration.Version).Count(&count).Error; err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := migration.Run(tx); err != nil {
+				return err
+			}
+			return tx.Create(&models.SchemaMigration{
+				Version:   migration.Version,
+				Name:      migration.Name,
+				AppliedAt: time.Now(),
+			}).Error
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func SeedDefaults(db *gorm.DB, cfg config.Config) error {

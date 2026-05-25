@@ -7,6 +7,7 @@ import { BrowserRouter } from 'react-router-dom';
 
 import { App } from '@/App';
 import '@/styles/global.css';
+import { initPerformanceMonitoring } from '@/features/charts/chartUtils';
 
 const antdStaticRoots = new WeakMap<Element | DocumentFragment, Root>();
 
@@ -22,6 +23,8 @@ unstableSetRender((node, container) => {
     antdStaticRoots.delete(container);
   };
 });
+
+initPerformanceMonitoring();
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

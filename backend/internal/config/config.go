@@ -12,22 +12,24 @@ import (
 )
 
 type Config struct {
-	AppEnv            string
-	AppAddr           string
-	MySQLDSN          string
-	JWTAccessSecret   string
-	JWTRefreshSecret  string
-	AccessTTL         time.Duration
-	RefreshTTL        time.Duration
-	CORSOrigins       []string
-	CookieSecure      bool
-	SeedAdminPassword string
-	RunAutoMigrate    bool
-	RunSeedDefaults   bool
-	RegisterMode      string
-	RegisterCode      string
-	DataSourceKey     string
-	QueryScheduler    bool
+	AppEnv                string
+	AppAddr               string
+	MySQLDSN              string
+	JWTAccessSecret       string
+	JWTRefreshSecret      string
+	AccessTTL             time.Duration
+	RefreshTTL            time.Duration
+	CORSOrigins           []string
+	CookieSecure          bool
+	SeedAdminPassword     string
+	RunAutoMigrate        bool
+	RunSeedDefaults       bool
+	RegisterMode          string
+	RegisterCode          string
+	DataSourceKey         string
+	QueryScheduler        bool
+	QueryMaxConcurrent    int
+	QueryLogRetentionDays int
 }
 
 func Load() Config {
@@ -35,22 +37,24 @@ func Load() Config {
 	appEnv := env("APP_ENV", "development")
 
 	return Config{
-		AppEnv:            appEnv,
-		AppAddr:           env("APP_ADDR", ":8080"),
-		MySQLDSN:          env("MYSQL_DSN", "lightbi:lightbi@tcp(127.0.0.1:3306)/lightbi?charset=utf8mb4&parseTime=True&loc=Local"),
-		JWTAccessSecret:   env("JWT_ACCESS_SECRET", "change-me-access-secret"),
-		JWTRefreshSecret:  env("JWT_REFRESH_SECRET", "change-me-refresh-secret"),
-		AccessTTL:         time.Duration(envInt("JWT_ACCESS_TTL_MINUTES", 30)) * time.Minute,
-		RefreshTTL:        time.Duration(envInt("JWT_REFRESH_TTL_HOURS", 168)) * time.Hour,
-		CORSOrigins:       envList("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
-		CookieSecure:      envBool("COOKIE_SECURE", false),
-		SeedAdminPassword: env("SEED_ADMIN_PASSWORD", "LightBI@123456"),
-		RunAutoMigrate:    envBool("RUN_AUTO_MIGRATE", false),
-		RunSeedDefaults:   envBool("RUN_SEED_DEFAULTS", false),
-		RegisterMode:      env("REGISTER_MODE", "disabled"),
-		RegisterCode:      env("REGISTER_CODE", ""),
-		DataSourceKey:     env("DATA_SOURCE_CREDENTIAL_KEY", "dev-only-change-me-data-source-key"),
-		QueryScheduler:    envBool("DATASET_QUERY_SCHEDULER", false),
+		AppEnv:                appEnv,
+		AppAddr:               env("APP_ADDR", ":8080"),
+		MySQLDSN:              env("MYSQL_DSN", "lightbi:lightbi@tcp(127.0.0.1:3306)/lightbi?charset=utf8mb4&parseTime=True&loc=Local"),
+		JWTAccessSecret:       env("JWT_ACCESS_SECRET", "change-me-access-secret"),
+		JWTRefreshSecret:      env("JWT_REFRESH_SECRET", "change-me-refresh-secret"),
+		AccessTTL:             time.Duration(envInt("JWT_ACCESS_TTL_MINUTES", 30)) * time.Minute,
+		RefreshTTL:            time.Duration(envInt("JWT_REFRESH_TTL_HOURS", 168)) * time.Hour,
+		CORSOrigins:           envList("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
+		CookieSecure:          envBool("COOKIE_SECURE", false),
+		SeedAdminPassword:     env("SEED_ADMIN_PASSWORD", "LightBI@123456"),
+		RunAutoMigrate:        envBool("RUN_AUTO_MIGRATE", false),
+		RunSeedDefaults:       envBool("RUN_SEED_DEFAULTS", false),
+		RegisterMode:          env("REGISTER_MODE", "disabled"),
+		RegisterCode:          env("REGISTER_CODE", ""),
+		DataSourceKey:         env("DATA_SOURCE_CREDENTIAL_KEY", "dev-only-change-me-data-source-key"),
+		QueryScheduler:        envBool("DATASET_QUERY_SCHEDULER", false),
+		QueryMaxConcurrent:    envInt("DATASET_QUERY_MAX_CONCURRENT", 8),
+		QueryLogRetentionDays: envInt("DATASET_QUERY_LOG_RETENTION_DAYS", 30),
 	}
 }
 
@@ -70,6 +74,12 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.DataSourceKey) == "" {
 		return errors.New("DATA_SOURCE_CREDENTIAL_KEY is required")
+	}
+	if cfg.QueryMaxConcurrent <= 0 {
+		return errors.New("DATASET_QUERY_MAX_CONCURRENT must be positive")
+	}
+	if cfg.QueryLogRetentionDays < 0 {
+		return errors.New("DATASET_QUERY_LOG_RETENTION_DAYS must not be negative")
 	}
 	if !cfg.IsProduction() {
 		return nil
