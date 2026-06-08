@@ -34,6 +34,26 @@ type DatasetQueryRequest struct {
 	TimeComparison string        `json:"timeComparison"`
 }
 
+type DatasetQuerySource string
+
+const (
+	DatasetQuerySourceEditor    DatasetQuerySource = "editor"
+	DatasetQuerySourcePublished DatasetQuerySource = "published"
+	DatasetQuerySourcePublic    DatasetQuerySource = "public"
+	DatasetQuerySourceEmbed     DatasetQuerySource = "embed"
+	DatasetQuerySourceExport    DatasetQuerySource = "export"
+	DatasetQuerySourceScheduler DatasetQuerySource = "scheduler"
+)
+
+type DatasetQueryContext struct {
+	ActorID     uint               `json:"actorId,omitempty"`
+	ProjectID   uint               `json:"projectId,omitempty"`
+	Source      DatasetQuerySource `json:"source,omitempty"`
+	ShareLinkID uint               `json:"shareLinkId,omitempty"`
+	IP          string             `json:"ip,omitempty"`
+	UserAgent   string             `json:"userAgent,omitempty"`
+}
+
 type QueryMetric struct {
 	Field       string `json:"field"`
 	Aggregation string `json:"aggregation"`
@@ -90,17 +110,66 @@ const (
 	defaultDatasetQueryLogRetentionDays = 30
 )
 
-func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, datasetID uint, req DatasetQueryRequest) (response DatasetQueryResponse, err error) {
-	start := time.Now()
+func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, queryContext DatasetQueryContext, datasetID uint, req DatasetQueryRequest) (response DatasetQueryResponse, err error) {
 	var dataset models.Dataset
 	if err := appDB.Preload("DataSource").First(&dataset, datasetID).Error; err != nil {
+		return DatasetQueryResponse{}, err
+	}
+	return executeDatasetQueryForDataset(ctx, appDB, cfg, queryContext, dataset, req, true)
+}
+
+func ExecuteDraftDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, queryContext DatasetQueryContext, dataset models.Dataset, req DatasetQueryRequest) (DatasetQueryResponse, error) {
+	return executeDatasetQueryForDataset(ctx, appDB, cfg, queryContext, dataset, req, false)
+}
+
+func PreviewDraftSQLRows(ctx context.Context, cfg config.Config, dataset models.Dataset, limit int) (DatasetQueryResponse, error) {
+	if dataset.Type != models.DatasetTypeSQL || dataset.DataSource == nil {
+		return DatasetQueryResponse{}, errors.New("draft SQL preview requires a SQL dataset and data source")
+	}
+	baseSQL, err := NormalizeReadOnlySQL(dataset.QuerySQL)
+	if err != nil {
+		return DatasetQueryResponse{}, err
+	}
+	limit = normalizeDraftPreviewLimit(limit)
+	timeout := dataset.QueryTimeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+	defer cancel()
+	db, err := OpenDataSourceWithNetworkPolicy(queryCtx, *dataset.DataSource, cfg.DataSourceKey, cfg.DataSourceAllowedHosts, cfg.DataSourceBlockPrivateNetworks)
+	if err != nil {
+		return DatasetQueryResponse{}, err
+	}
+	defer CloseDataSource(db)
+
+	rows, err := db.QueryContext(queryCtx, buildDraftSQLPreviewQuery(baseSQL, limit))
+	if err != nil {
+		return DatasetQueryResponse{}, errors.New("dataset SQL execution failed")
+	}
+	defer rows.Close()
+	columnTypes, _ := rows.ColumnTypes()
+	result, err := scanSQLRows(rows)
+	if err != nil {
+		return DatasetQueryResponse{}, errors.New("dataset SQL result scan failed")
+	}
+	return DatasetQueryResponse{
+		Columns:    inferDraftSQLColumns(columnTypes, result),
+		Rows:       result,
+		ExecutedAt: time.Now(),
+	}, nil
+}
+
+func executeDatasetQueryForDataset(ctx context.Context, appDB *gorm.DB, cfg config.Config, queryContext DatasetQueryContext, dataset models.Dataset, req DatasetQueryRequest, writeLog bool) (response DatasetQueryResponse, err error) {
+	start := time.Now()
+	if err := validateDatasetQueryContext(dataset, queryContext); err != nil {
 		return DatasetQueryResponse{}, err
 	}
 	var normalizedReq DatasetQueryRequest
 	var cacheKey string
 	defer func() {
-		if normalizedReq.Limit > 0 || len(normalizedReq.Dimensions) > 0 || len(normalizedReq.Metrics) > 0 {
-			enqueueDatasetQueryLog(appDB, cfg.QueryLogRetentionDays, dataset, normalizedReq, cacheKey, response, err, time.Since(start))
+		if writeLog && (normalizedReq.Limit > 0 || len(normalizedReq.Dimensions) > 0 || len(normalizedReq.Metrics) > 0) {
+			enqueueDatasetQueryLog(appDB, cfg.QueryLogRetentionDays, dataset, queryContext, normalizedReq, cacheKey, response, err, time.Since(start))
 		}
 	}()
 	normalizedReq, fields, err := normalizeDatasetQueryRequest(dataset, req)
@@ -112,7 +181,7 @@ func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config,
 	if err != nil {
 		return DatasetQueryResponse{}, err
 	}
-	if dataset.CacheTTL > 0 {
+	if writeLog && dataset.CacheTTL > 0 {
 		if cached, ok := loadDatasetQueryCache(appDB, dataset.ID, cacheKey); ok {
 			cached.Cached = true
 			response = cached
@@ -143,12 +212,19 @@ func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config,
 	}
 	response.ExecutedAt = time.Now()
 
-	if dataset.CacheTTL > 0 {
+	if writeLog && dataset.CacheTTL > 0 {
 		expiresAt := time.Now().Add(time.Duration(dataset.CacheTTL) * time.Second)
 		response.ExpiresAt = &expiresAt
 		_ = saveDatasetQueryCache(appDB, dataset.ID, cacheKey, response, expiresAt)
 	}
 	return response, nil
+}
+
+func validateDatasetQueryContext(dataset models.Dataset, queryContext DatasetQueryContext) error {
+	if queryContext.ProjectID > 0 && dataset.ProjectID != queryContext.ProjectID {
+		return fmt.Errorf("dataset %d is outside project scope", dataset.ID)
+	}
+	return nil
 }
 
 func acquireDatasetQuerySlot(ctx context.Context, maxConcurrent int) (func(), error) {
@@ -171,15 +247,15 @@ func acquireDatasetQuerySlot(ctx context.Context, maxConcurrent int) (func(), er
 	}
 }
 
-func enqueueDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) {
+func enqueueDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, queryContext DatasetQueryContext, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), datasetQueryLogWriteTimeout)
 		defer cancel()
-		_ = writeDatasetQueryLog(appDB.WithContext(ctx), retentionDays, dataset, req, queryHash, response, queryErr, duration)
+		_ = writeDatasetQueryLog(appDB.WithContext(ctx), retentionDays, dataset, queryContext, req, queryHash, response, queryErr, duration)
 	}()
 }
 
-func writeDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) error {
+func writeDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Dataset, queryContext DatasetQueryContext, req DatasetQueryRequest, queryHash string, response DatasetQueryResponse, queryErr error, duration time.Duration) error {
 	status := "success"
 	errorMessage := ""
 	if queryErr != nil {
@@ -195,6 +271,14 @@ func writeDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Data
 		"filters":    len(req.Filters),
 		"sorts":      req.Sorts,
 		"topN":       req.TopN,
+		"context": map[string]any{
+			"actorId":     queryContext.ActorID,
+			"projectId":   queryContext.ProjectID,
+			"source":      queryContext.Source,
+			"shareLinkId": queryContext.ShareLinkID,
+			"ip":          queryContext.IP,
+			"userAgent":   truncate(queryContext.UserAgent, 160),
+		},
 	})
 	if err := appDB.Create(&models.DatasetQueryLog{
 		DatasetID:      dataset.ID,
@@ -213,6 +297,13 @@ func writeDatasetQueryLog(appDB *gorm.DB, retentionDays int, dataset models.Data
 		return err
 	}
 	return maybePruneDatasetQueryLogs(appDB, retentionDays, time.Now())
+}
+
+func truncate(value string, max int) string {
+	if len(value) <= max {
+		return value
+	}
+	return value[:max]
 }
 
 func maybePruneDatasetQueryLogs(db *gorm.DB, retentionDays int, now time.Time) error {
@@ -350,7 +441,7 @@ func executeSQLDatasetQuery(ctx context.Context, cfg config.Config, dataset mode
 	if err != nil {
 		return DatasetQueryResponse{}, err
 	}
-	db, err := OpenDataSource(ctx, *dataset.DataSource, cfg.DataSourceKey)
+	db, err := OpenDataSourceWithNetworkPolicy(ctx, *dataset.DataSource, cfg.DataSourceKey, cfg.DataSourceAllowedHosts, cfg.DataSourceBlockPrivateNetworks)
 	if err != nil {
 		return DatasetQueryResponse{}, err
 	}
@@ -362,12 +453,12 @@ func executeSQLDatasetQuery(ctx context.Context, cfg config.Config, dataset mode
 	}
 	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return DatasetQueryResponse{}, err
+		return DatasetQueryResponse{}, errors.New("dataset SQL execution failed")
 	}
 	defer rows.Close()
 	result, err := scanSQLRows(rows)
 	if err != nil {
-		return DatasetQueryResponse{}, err
+		return DatasetQueryResponse{}, errors.New("dataset SQL result scan failed")
 	}
 	return DatasetQueryResponse{Columns: columns, Rows: result}, nil
 }
@@ -567,6 +658,72 @@ func buildSQLOrder(req DatasetQueryRequest, quote string) string {
 		parts = append(parts, quoteIdentifier(safeAlias(sortItem.Field), quote)+" "+order)
 	}
 	return strings.Join(parts, ", ")
+}
+
+func normalizeDraftPreviewLimit(limit int) int {
+	if limit <= 0 {
+		return 20
+	}
+	if limit > 100 {
+		return 100
+	}
+	return limit
+}
+
+func buildDraftSQLPreviewQuery(baseSQL string, limit int) string {
+	return "SELECT * FROM (" + baseSQL + ") AS dataset_base LIMIT " + strconv.Itoa(normalizeDraftPreviewLimit(limit))
+}
+
+func inferDraftSQLColumns(columnTypes []*sql.ColumnType, rows []map[string]any) []DatasetQueryColumn {
+	columns := make([]DatasetQueryColumn, 0, len(columnTypes))
+	for _, columnType := range columnTypes {
+		name := columnType.Name()
+		fieldType := inferDatasetFieldType(columnType.DatabaseTypeName(), sampleColumnValue(rows, name))
+		role := "dimension"
+		if fieldType == "number" {
+			role = "measure"
+		}
+		columns = append(columns, DatasetQueryColumn{
+			Name:  name,
+			Label: name,
+			Role:  role,
+			Type:  fieldType,
+		})
+	}
+	return columns
+}
+
+func sampleColumnValue(rows []map[string]any, column string) any {
+	for _, row := range rows {
+		if value, ok := row[column]; ok && value != nil {
+			return value
+		}
+	}
+	return nil
+}
+
+func inferDatasetFieldType(databaseType string, sample any) string {
+	normalized := strings.ToLower(databaseType)
+	if strings.Contains(normalized, "date") || strings.Contains(normalized, "time") {
+		return "date"
+	}
+	if strings.Contains(normalized, "int") ||
+		strings.Contains(normalized, "decimal") ||
+		strings.Contains(normalized, "numeric") ||
+		strings.Contains(normalized, "number") ||
+		strings.Contains(normalized, "float") ||
+		strings.Contains(normalized, "double") ||
+		strings.Contains(normalized, "real") {
+		return "number"
+	}
+	switch sample.(type) {
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+		return "number"
+	case time.Time:
+		return "date"
+	default:
+		return "string"
+	}
 }
 
 func scanSQLRows(rows *sql.Rows) ([]map[string]any, error) {

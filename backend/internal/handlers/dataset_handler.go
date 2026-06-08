@@ -72,6 +72,11 @@ type datasetRequest struct {
 	RowLimit     int                `json:"rowLimit"`
 }
 
+type draftDatasetPreviewRequest struct {
+	Dataset datasetRequest               `json:"dataset"`
+	Query   services.DatasetQueryRequest `json:"query"`
+}
+
 func (h DatasetHandler) List(c *gin.Context) {
 	query := addProjectFilter(c, h.DB, h.DB.Model(&models.Dataset{}), "project_id")
 	if datasetType := models.DatasetType(c.Query("type")); datasetType != "" {
@@ -260,6 +265,110 @@ func (h DatasetHandler) Preview(c *gin.Context) {
 	h.query(c, true)
 }
 
+func (h DatasetHandler) PreviewDraft(c *gin.Context) {
+	user, _ := middleware.CurrentUser(c)
+	var req draftDatasetPreviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, http.StatusBadRequest, "invalid dataset preview payload")
+		return
+	}
+	workspaceID, projectID := requestScopeFromRaw(req.Dataset.WorkspaceID, req.Dataset.ProjectID)
+	scope, ok := resolveAssetScope(c, h.DB, workspaceID, projectID)
+	if !ok {
+		return
+	}
+	if !canWriteProject(h.DB, user, scope.ProjectID) {
+		Fail(c, http.StatusForbidden, "project permission denied")
+		return
+	}
+	if shouldRunDraftSQLPreview(req) {
+		dataset, err := h.draftSQLDatasetForPreview(req.Dataset, scope, user.ID)
+		if err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		response, err := services.PreviewDraftSQLRows(c.Request.Context(), h.Config, dataset, req.Query.Limit)
+		if err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		OK(c, response)
+		return
+	}
+	dataset, err := h.datasetFromRequest(req.Dataset, scope, user.ID, user.ID)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if dataset.DataSourceID != nil {
+		var source models.DataSource
+		if err := h.DB.First(&source, *dataset.DataSourceID).Error; err != nil {
+			Fail(c, http.StatusBadRequest, "data source not found")
+			return
+		}
+		dataset.DataSource = &source
+	}
+	if req.Query.Limit == 0 {
+		req.Query.Limit = 20
+	}
+	response, err := services.ExecuteDraftDatasetQuery(c.Request.Context(), h.DB, h.Config, services.DatasetQueryContext{
+		ActorID:   user.ID,
+		ProjectID: scope.ProjectID,
+		Source:    services.DatasetQuerySourceEditor,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}, dataset, req.Query)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	OK(c, response)
+}
+
+func shouldRunDraftSQLPreview(req draftDatasetPreviewRequest) bool {
+	datasetType := req.Dataset.Type
+	if datasetType == "" {
+		datasetType = models.DatasetTypeSQL
+	}
+	return datasetType == models.DatasetTypeSQL &&
+		len(req.Dataset.Dimensions) == 0 &&
+		len(req.Dataset.Measures) == 0 &&
+		len(req.Query.Dimensions) == 0 &&
+		len(req.Query.Metrics) == 0
+}
+
+func (h DatasetHandler) draftSQLDatasetForPreview(req datasetRequest, scope assetScope, ownerID uint) (models.Dataset, error) {
+	if req.DataSourceID == nil {
+		return models.Dataset{}, errBadRequest("dataSourceId is required")
+	}
+	if _, err := services.NormalizeReadOnlySQL(req.QuerySQL); err != nil {
+		return models.Dataset{}, err
+	}
+	var source models.DataSource
+	if err := h.DB.Where("id = ? AND project_id = ? AND status = ?", *req.DataSourceID, scope.ProjectID, models.DataSourceStatusActive).First(&source).Error; err != nil {
+		return models.Dataset{}, errBadRequest("data source not found")
+	}
+	rowLimit := req.RowLimit
+	if rowLimit <= 0 {
+		rowLimit = 500
+	}
+	queryTimeout := req.QueryTimeout
+	if queryTimeout <= 0 {
+		queryTimeout = 10
+	}
+	return models.Dataset{
+		WorkspaceID:  scope.WorkspaceID,
+		ProjectID:    scope.ProjectID,
+		OwnerID:      ownerID,
+		Type:         models.DatasetTypeSQL,
+		DataSourceID: req.DataSourceID,
+		DataSource:   &source,
+		QuerySQL:     req.QuerySQL,
+		QueryTimeout: queryTimeout,
+		RowLimit:     rowLimit,
+	}, nil
+}
+
 func (h DatasetHandler) Query(c *gin.Context) {
 	h.query(c, false)
 }
@@ -312,7 +421,13 @@ func (h DatasetHandler) query(c *gin.Context, preview bool) {
 	if preview && req.Limit == 0 {
 		req.Limit = 100
 	}
-	response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, id, req)
+	response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, services.DatasetQueryContext{
+		ActorID:   user.ID,
+		ProjectID: dataset.ProjectID,
+		Source:    services.DatasetQuerySourceEditor,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}, id, req)
 	if err != nil {
 		Fail(c, http.StatusBadRequest, err.Error())
 		return

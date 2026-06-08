@@ -17,11 +17,12 @@ import (
 
 func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	engine := gin.Default()
+	engine.Use(middleware.RequestID())
 	engine.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodOptions},
-		AllowHeaders:     []string{"Authorization", "Content-Type"},
-		ExposeHeaders:    []string{"Content-Length"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", middleware.RequestIDHeader},
+		ExposeHeaders:    []string{"Content-Length", middleware.RequestIDHeader},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
 	}))
@@ -118,6 +119,7 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 
 	protected.GET("/datasets", readRoles, datasetHandler.List)
 	protected.POST("/datasets", writeRoles, datasetHandler.Create)
+	protected.POST("/datasets/preview", writeRoles, datasetHandler.PreviewDraft)
 	protected.GET("/datasets/:id", readRoles, datasetHandler.Get)
 	protected.PUT("/datasets/:id", writeRoles, datasetHandler.Update)
 	protected.DELETE("/datasets/:id", writeRoles, datasetHandler.Delete)

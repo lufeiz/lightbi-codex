@@ -1,7 +1,7 @@
 import { ApartmentOutlined, DatabaseOutlined, LogoutOutlined, PieChartOutlined, RocketOutlined, SaveOutlined, TableOutlined } from '@ant-design/icons';
 import { Avatar, Button, Layout, Select, Space, Typography } from 'antd';
 import { useEffect } from 'react';
-import { Link, Outlet, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '@/store/authStore';
 import { useEditorToolbarStore } from '@/store/editorToolbarStore';
@@ -11,12 +11,15 @@ const { Header, Content } = Layout;
 
 export function AppShell() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, logout } = useAuthStore();
   const toolbar = useEditorToolbarStore((state) => state.toolbar);
   const workspaces = useWorkspaceStore((state) => state.workspaces);
   const projects = useWorkspaceStore((state) => state.projects);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
+  const workspaceLoading = useWorkspaceStore((state) => state.loading);
+  const workspaceBootstrapped = useWorkspaceStore((state) => state.bootstrapped);
   const bootstrapWorkspace = useWorkspaceStore((state) => state.bootstrap);
   const setWorkspace = useWorkspaceStore((state) => state.setWorkspace);
   const setProject = useWorkspaceStore((state) => state.setProject);
@@ -24,6 +27,12 @@ export function AppShell() {
   useEffect(() => {
     void bootstrapWorkspace();
   }, [bootstrapWorkspace]);
+
+  useEffect(() => {
+    if (workspaceBootstrapped && !workspaceLoading && (!workspaceId || !projectId) && location.pathname !== '/workspaces') {
+      navigate('/workspaces', { replace: true });
+    }
+  }, [location.pathname, navigate, projectId, workspaceBootstrapped, workspaceId, workspaceLoading]);
 
   const handleLogout = async () => {
     await logout();

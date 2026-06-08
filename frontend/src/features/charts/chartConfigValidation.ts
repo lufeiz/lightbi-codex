@@ -41,6 +41,18 @@ function validateWidget(widget: ChartWidget, index: number): string[] {
   if (!widget.config.title.trim()) {
     errors.push(`第 ${index} 个组件缺少标题`);
   }
+  const definition = chartDefinitionMap.get(widget.type);
+  if (definition?.requiresDataset) {
+    if (!widget.config.datasetId) {
+      errors.push(`第 ${index} 个组件缺少数据集`);
+    }
+    if ((widget.config.dimensions ?? []).length < definition.minDimensions) {
+      errors.push(`第 ${index} 个组件至少需要 ${definition.minDimensions} 个维度`);
+    }
+    if ((widget.config.measures ?? []).length < definition.minMeasures) {
+      errors.push(`第 ${index} 个组件至少需要 ${definition.minMeasures} 个指标`);
+    }
+  }
   errors.push(...validateFieldRefs(widget.config.dimensions, index, '维度'));
   errors.push(...validateFieldRefs(widget.config.measures, index, '指标'));
 

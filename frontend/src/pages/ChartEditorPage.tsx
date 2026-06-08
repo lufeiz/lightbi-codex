@@ -12,8 +12,8 @@ import { chartTypeGroups } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
 import { useDesignerStore } from '@/store/designerStore';
 import { useEditorToolbarStore } from '@/store/editorToolbarStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
-import type { ChartStatus, ChartType } from '@/types/domain';
+import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
+import type { ChartMutationPayload, ChartStatus, ChartType } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
 
 export function ChartEditorPage() {
@@ -30,7 +30,8 @@ export function ChartEditorPage() {
   const user = useAuthStore((state) => state.user);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
-  const canWrite = user?.role === 'admin' || user?.role === 'editor';
+  const projectRole = useWorkspaceStore((state) => state.projectRole);
+  const canWrite = hasProjectWriteAccess(user, projectRole);
   const meta = useDesignerStore((state) => state.meta);
   const widgets = useDesignerStore((state) => state.widgets);
   const reset = useDesignerStore((state) => state.reset);
@@ -81,7 +82,7 @@ export function ChartEditorPage() {
     addWidget(type);
   };
 
-  const saveDashboard = useCallback(async (statusOverride?: ChartStatus) => {
+  const buildMutationPayload = useCallback((statusOverride?: ChartStatus): ChartMutationPayload | null => {
     if (!canWrite) {
       message.warning('当前角色只读，不能保存仪表盘');
       return null;
@@ -111,6 +112,14 @@ export function ChartEditorPage() {
     if (statusOverride) {
       payload.status = statusOverride;
     }
+    return payload;
+  }, [canWrite, chartId, meta.name, projectId, toPayload, widgets.length, workspaceId]);
+
+  const saveDashboard = useCallback(async (statusOverride?: ChartStatus) => {
+    const payload = buildMutationPayload(statusOverride);
+    if (!payload) {
+      return null;
+    }
     const saved = chartId ? await api.updateChart(chartId, payload) : await api.createChart(payload);
     if (statusOverride) {
       setMeta({ status: statusOverride });
@@ -119,7 +128,7 @@ export function ChartEditorPage() {
       navigate(`/charts/${saved.id}/edit`, { replace: true });
     }
     return saved;
-  }, [canWrite, chartId, meta.name, navigate, projectId, setMeta, toPayload, widgets.length, workspaceId]);
+  }, [buildMutationPayload, chartId, navigate, setMeta]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -142,11 +151,17 @@ export function ChartEditorPage() {
     }
     setPublishing(true);
     try {
+      const payload = buildMutationPayload('published');
+      if (!payload) {
+        return;
+      }
       if (chartId) {
-        await api.publishChart(chartId);
+        await api.publishChart(chartId, payload);
         setMeta({ status: 'published' });
       } else {
-        await saveDashboard('published');
+        const saved = await api.createChart(payload);
+        setMeta({ status: 'published' });
+        navigate(`/charts/${saved.id}/edit`, { replace: true });
       }
       message.success('仪表盘已发布');
     } catch (err) {
@@ -154,21 +169,30 @@ export function ChartEditorPage() {
     } finally {
       setPublishing(false);
     }
-  }, [canWrite, chartId, saveDashboard, setMeta]);
+  }, [buildMutationPayload, canWrite, chartId, navigate, setMeta]);
 
   const handleSaveAndPublish = useCallback(async () => {
     setSaving(true);
     try {
-      const saved = await saveDashboard('published');
-      if (saved) {
-        message.success('仪表盘已保存并发布');
+      const payload = buildMutationPayload('published');
+      if (!payload) {
+        return;
       }
+      if (chartId) {
+        await api.publishChart(chartId, payload);
+        setMeta({ status: 'published' });
+      } else {
+        const saved = await api.createChart(payload);
+        setMeta({ status: 'published' });
+        navigate(`/charts/${saved.id}/edit`, { replace: true });
+      }
+      message.success('仪表盘已保存并发布');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '保存并发布失败');
     } finally {
       setSaving(false);
     }
-  }, [saveDashboard]);
+  }, [buildMutationPayload, chartId, navigate, setMeta]);
 
   useEffect(() => {
     if (loading) {

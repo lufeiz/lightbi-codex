@@ -45,7 +45,7 @@ import {
   groupToSelectOptions
 } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
 import type { ChartAsset, ChartGroup, ChartQuery, ChartTag, UserDTO } from '@/types/domain';
 import { chartStatusLabels, chartTypeLabels } from '@/types/domain';
 
@@ -92,7 +92,9 @@ export function ChartsPage() {
   const user = useAuthStore((state) => state.user);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
-  const canWrite = user?.role === 'admin' || user?.role === 'editor';
+  const projectRole = useWorkspaceStore((state) => state.projectRole);
+  const canWrite = hasProjectWriteAccess(user, projectRole);
+  const createDisabledReason = !projectId ? '请先创建或选择项目' : !canWrite ? '当前项目无写权限' : '';
   const scope = useMemo(() => ({ workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined }), [projectId, workspaceId]);
 
   const groupTree = useMemo(() => buildGroupTree(groups), [groups]);
@@ -470,9 +472,25 @@ export function ChartsPage() {
                 { label: '卡片', value: 'card' }
               ]}
             />
-            <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => navigate('/charts/new')}>
-              创建仪表盘
-            </Button>
+            <Space direction="vertical" size={2} align="end">
+              <Tooltip title={createDisabledReason}>
+                <span>
+                  <Button type="primary" icon={<PlusOutlined />} disabled={Boolean(createDisabledReason)} onClick={() => navigate('/charts/new')}>
+                    创建仪表盘
+                  </Button>
+                </span>
+              </Tooltip>
+              {createDisabledReason && (
+                <Typography.Text type="secondary" className="asset-action-hint">
+                  {createDisabledReason}
+                  {!projectId && (
+                    <Button type="link" size="small" onClick={() => navigate('/workspaces')}>
+                      去创建项目
+                    </Button>
+                  )}
+                </Typography.Text>
+              )}
+            </Space>
           </Space>
         </div>
 

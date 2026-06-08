@@ -36,11 +36,26 @@ const defaultFieldLabels: Record<string, string> = {
   orders: '订单数'
 };
 
-export function DashboardFilterBar() {
-  const widgets = useDesignerStore((state) => state.widgets);
-  const runtimeRows = useDesignerStore((state) => state.runtimeRows);
-  const filters = useDesignerStore((state) => state.filters);
-  const setFilters = useDesignerStore((state) => state.setFilters);
+interface DashboardFilterBarProps {
+  widgets?: ChartWidget[];
+  runtimeRows?: Record<string, unknown[]>;
+  filters?: DashboardFilters;
+  onFiltersChange?: (filters: Partial<DashboardFilters>) => void;
+  compact?: boolean;
+  allowConfigure?: boolean;
+}
+
+export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
+  const storeWidgets = useDesignerStore((state) => state.widgets);
+  const storeRuntimeRows = useDesignerStore((state) => state.runtimeRows);
+  const storeFilters = useDesignerStore((state) => state.filters);
+  const storeSetFilters = useDesignerStore((state) => state.setFilters);
+  const widgets = props.widgets ?? storeWidgets;
+  const runtimeRows = props.runtimeRows ?? storeRuntimeRows;
+  const filters = props.filters ?? storeFilters;
+  const setFilters = props.onFiltersChange ?? storeSetFilters;
+  const compact = props.compact ?? false;
+  const allowConfigure = props.allowConfigure ?? true;
   const chartOptions = useMemo(() => buildChartOptions(widgets), [widgets]);
   const normalizedControls = useMemo(
     () => normalizeDimensionControls(filters.dimensionControls, widgets, runtimeRows),
@@ -136,22 +151,24 @@ export function DashboardFilterBar() {
   };
 
   return (
-    <section className="filter-sidebar-content" aria-label="筛选栏">
+    <section className={compact ? 'filter-sidebar-content filter-sidebar-content-compact' : 'filter-sidebar-content'} aria-label="筛选栏">
       <div className="filter-sidebar-heading">
         <FilterOutlined />
         <Typography.Text>筛选栏</Typography.Text>
       </div>
 
-      <div className="filter-dynamic-actions">
-        {!timeEnabled && (
-          <Button icon={<CalendarOutlined />} onClick={addTimeFilter}>
-            添加日期
+      {allowConfigure && (
+        <div className="filter-dynamic-actions">
+          {!timeEnabled && (
+            <Button icon={<CalendarOutlined />} onClick={addTimeFilter}>
+              添加日期
+            </Button>
+          )}
+          <Button icon={<PlusOutlined />} onClick={() => openDimensionModal()}>
+            添加维度
           </Button>
-        )}
-        <Button icon={<PlusOutlined />} onClick={() => openDimensionModal()}>
-          添加维度
-        </Button>
-      </div>
+        </div>
+      )}
 
       <div className="filter-dynamic-controls">
         {timeEnabled && (
@@ -179,6 +196,7 @@ export function DashboardFilterBar() {
               className="dimension-delete-button"
               danger
               icon={<DeleteOutlined />}
+              disabled={!allowConfigure}
               type="text"
               onClick={deleteTimeFilter}
             />
@@ -200,7 +218,11 @@ export function DashboardFilterBar() {
                       className="filter-name-input dimension-name-trigger"
                       value={control.label || '维度'}
                       placeholder="维度"
-                      onClick={() => openDimensionModal(control)}
+                      onClick={() => {
+                        if (allowConfigure) {
+                          openDimensionModal(control);
+                        }
+                      }}
                     />
                     <Select
                       allowClear
@@ -220,6 +242,7 @@ export function DashboardFilterBar() {
                       className="dimension-delete-button"
                       danger
                       icon={<DeleteOutlined />}
+                      disabled={!allowConfigure}
                       type="text"
                       onClick={() => deleteDimensionControl(control.id)}
                     />

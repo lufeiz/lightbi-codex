@@ -336,6 +336,17 @@ export interface ChartAsset {
   updatedAt: string;
 }
 
+export interface PublishedChartAsset {
+  id: number;
+  name: string;
+  description: string;
+  type: ChartType;
+  status: ChartStatus;
+  config: ChartDocument;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ChartListResponse {
   items: ChartAsset[];
   total: number;
@@ -370,6 +381,11 @@ export interface ChartMutationPayload {
   groupId: number | null;
   tagIds: number[];
   config: ChartDocument;
+}
+
+export interface ChartPublishResponse {
+  chart: ChartAsset;
+  version: ChartVersion;
 }
 
 export interface LoginPayload {
@@ -465,11 +481,23 @@ export interface ExportResponse {
   rowCount: number;
 }
 
+export interface WidgetRuntimeStatus {
+  widgetId: string;
+  status: 'success' | 'empty' | 'error';
+  cached: boolean;
+  rowCount: number;
+  durationMs: number;
+  errorCode?: string;
+  message: string;
+  executedAt?: string;
+}
+
 export interface PublishedDashboard {
-  chart: ChartAsset;
+  chart: PublishedChartAsset;
   version?: ChartVersion;
   shareLink?: DashboardShareLink;
   runtimeRows: Record<string, DataRow[]>;
+  runtimeStatus: Record<string, WidgetRuntimeStatus>;
   embed: boolean;
 }
 

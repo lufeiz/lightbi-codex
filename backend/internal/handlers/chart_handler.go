@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -35,6 +37,11 @@ type chartListResponse struct {
 	Total    int64          `json:"total"`
 	Page     int            `json:"page"`
 	PageSize int            `json:"pageSize"`
+}
+
+type chartPublishResponse struct {
+	Chart   models.Chart    `json:"chart"`
+	Version chartVersionDTO `json:"version"`
 }
 
 func (h ChartHandler) List(c *gin.Context) {
@@ -159,11 +166,15 @@ func (h ChartHandler) Create(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "invalid chart config json")
 		return
 	}
-	if req.GroupID != nil && !h.groupExists(*req.GroupID) {
+	if err := h.validateConfigDatasetScope(config, scope.ProjectID); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.GroupID != nil && !h.groupExists(*req.GroupID, scope.ProjectID) {
 		Fail(c, http.StatusBadRequest, "group not found")
 		return
 	}
-	tags, ok := h.loadTags(req.TagIDs)
+	tags, ok := h.loadTags(req.TagIDs, scope.ProjectID)
 	if !ok {
 		Fail(c, http.StatusBadRequest, "tag not found")
 		return
@@ -183,7 +194,20 @@ func (h ChartHandler) Create(c *gin.Context) {
 		CreatedBy:   user.ID,
 		UpdatedBy:   user.ID,
 	}
-	if err := h.DB.Create(&chart).Error; err != nil {
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&chart).Error; err != nil {
+			return err
+		}
+		if req.Status == models.ChartStatusPublished {
+			version, err := snapshotChartVersion(tx, chart, user.ID)
+			if err != nil {
+				return err
+			}
+			audit(tx, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.publish", "chart", chart.ID, "发布仪表盘", map[string]any{"status": req.Status, "version": version.Version})
+		}
+		return nil
+	})
+	if err != nil {
 		Fail(c, http.StatusBadRequest, "create chart failed")
 		return
 	}
@@ -240,11 +264,15 @@ func (h ChartHandler) Update(c *gin.Context) {
 		Fail(c, http.StatusBadRequest, "invalid chart config json")
 		return
 	}
-	if req.GroupID != nil && !h.groupExists(*req.GroupID) {
+	if err := h.validateConfigDatasetScope(config, chart.ProjectID); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.GroupID != nil && !h.groupExists(*req.GroupID, chart.ProjectID) {
 		Fail(c, http.StatusBadRequest, "group not found")
 		return
 	}
-	tags, ok := h.loadTags(req.TagIDs)
+	tags, ok := h.loadTags(req.TagIDs, chart.ProjectID)
 	if !ok {
 		Fail(c, http.StatusBadRequest, "tag not found")
 		return
@@ -262,7 +290,25 @@ func (h ChartHandler) Update(c *gin.Context) {
 		}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&chart).Association("Tags").Replace(tags)
+		if err := tx.Model(&chart).Association("Tags").Replace(tags); err != nil {
+			return err
+		}
+		if chart.Status != models.ChartStatusPublished && req.Status == models.ChartStatusPublished {
+			next := chart
+			next.Name = req.Name
+			next.Description = req.Description
+			next.Type = req.Type
+			next.Status = req.Status
+			next.GroupID = req.GroupID
+			next.Config = config
+			next.UpdatedBy = user.ID
+			version, err := snapshotChartVersion(tx, next, user.ID)
+			if err != nil {
+				return err
+			}
+			audit(tx, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.publish", "chart", chart.ID, "发布仪表盘", map[string]any{"status": req.Status, "version": version.Version})
+		}
+		return nil
 	})
 	if err != nil {
 		Fail(c, http.StatusBadRequest, "update chart failed")
@@ -327,7 +373,100 @@ func (h ChartHandler) Copy(c *gin.Context) {
 }
 
 func (h ChartHandler) Publish(c *gin.Context) {
-	h.changeStatus(c, models.ChartStatusPublished)
+	user, _ := middleware.CurrentUser(c)
+	var chart models.Chart
+	if err := h.DB.Preload("Tags").First(&chart, c.Param("id")).Error; err != nil {
+		Fail(c, http.StatusNotFound, "chart not found")
+		return
+	}
+	if !requireChartWrite(c, h.DB, &chart) {
+		return
+	}
+
+	req, hasPayload, ok := optionalChartRequest(c)
+	if !ok {
+		Fail(c, http.StatusBadRequest, "invalid chart payload")
+		return
+	}
+	next := chart
+	var tags []models.ChartTag
+	if hasPayload {
+		if req.Name == "" {
+			Fail(c, http.StatusBadRequest, "chart name is required")
+			return
+		}
+		if !models.ValidChartType(req.Type) {
+			Fail(c, http.StatusBadRequest, "invalid chart type")
+			return
+		}
+		config, ok := normalizeConfig(req.Config)
+		if !ok {
+			Fail(c, http.StatusBadRequest, "invalid chart config json")
+			return
+		}
+		if err := h.validateConfigDatasetScope(config, chart.ProjectID); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+		if req.GroupID != nil && !h.groupExists(*req.GroupID, chart.ProjectID) {
+			Fail(c, http.StatusBadRequest, "group not found")
+			return
+		}
+		var loaded bool
+		tags, loaded = h.loadTags(req.TagIDs, chart.ProjectID)
+		if !loaded {
+			Fail(c, http.StatusBadRequest, "tag not found")
+			return
+		}
+		next.Name = req.Name
+		next.Description = req.Description
+		next.Type = req.Type
+		next.GroupID = req.GroupID
+		next.Config = config
+	} else {
+		if err := h.validateConfigDatasetScope(chart.Config, chart.ProjectID); err != nil {
+			Fail(c, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	next.Status = models.ChartStatusPublished
+	next.UpdatedBy = user.ID
+
+	var version models.ChartVersion
+	err := h.DB.Transaction(func(tx *gorm.DB) error {
+		updates := map[string]interface{}{
+			"status":     models.ChartStatusPublished,
+			"updated_by": user.ID,
+		}
+		if hasPayload {
+			updates["name"] = next.Name
+			updates["description"] = next.Description
+			updates["type"] = next.Type
+			updates["group_id"] = next.GroupID
+			updates["config"] = next.Config
+		}
+		if err := tx.Model(&chart).Updates(updates).Error; err != nil {
+			return err
+		}
+		if hasPayload {
+			if err := tx.Model(&chart).Association("Tags").Replace(tags); err != nil {
+				return err
+			}
+		}
+		created, err := snapshotChartVersion(tx, next, user.ID)
+		if err != nil {
+			return err
+		}
+		version = created
+		audit(tx, user.ID, chart.WorkspaceID, chart.ProjectID, "chart.publish", "chart", chart.ID, "发布仪表盘", map[string]any{"status": models.ChartStatusPublished, "version": version.Version})
+		return nil
+	})
+	if err != nil {
+		Fail(c, http.StatusInternalServerError, "publish chart failed")
+		return
+	}
+	h.DB.Preload("Tags").Preload("Group").Preload("Creator").Preload("Updater").First(&chart, chart.ID)
+	OK(c, chartPublishResponse{Chart: chart, Version: toChartVersionDTO(version)})
 }
 
 func (h ChartHandler) Archive(c *gin.Context) {
@@ -371,28 +510,128 @@ func (h ChartHandler) changeStatus(c *gin.Context, status models.ChartStatus) {
 	OK(c, chart)
 }
 
-func (h ChartHandler) loadTags(tagIDs []uint) ([]models.ChartTag, bool) {
+func (h ChartHandler) loadTags(tagIDs []uint, projectID uint) ([]models.ChartTag, bool) {
 	if len(tagIDs) == 0 {
 		return []models.ChartTag{}, true
 	}
 	var tags []models.ChartTag
-	if err := h.DB.Where("id IN ?", tagIDs).Find(&tags).Error; err != nil {
+	if err := h.DB.Where("project_id = ? AND id IN ?", projectID, tagIDs).Find(&tags).Error; err != nil {
 		return nil, false
 	}
 	return tags, len(tags) == len(uniqueUint(tagIDs))
 }
 
-func (h ChartHandler) groupExists(groupID uint) bool {
+func optionalChartRequest(c *gin.Context) (chartRequest, bool, bool) {
+	raw, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		return chartRequest{}, false, false
+	}
+	if len(strings.TrimSpace(string(raw))) == 0 {
+		return chartRequest{}, false, true
+	}
+	var req chartRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return chartRequest{}, true, false
+	}
+	return req, true, true
+}
+
+func (h ChartHandler) validateConfigDatasetScope(config []byte, projectID uint) error {
+	var doc struct {
+		Widgets []struct {
+			ID     string `json:"id"`
+			Config struct {
+				DatasetID  *uint    `json:"datasetId"`
+				Dimensions []string `json:"dimensions"`
+				Measures   []string `json:"measures"`
+			} `json:"config"`
+		} `json:"widgets"`
+	}
+	if err := json.Unmarshal(config, &doc); err != nil {
+		return fmt.Errorf("invalid chart config json")
+	}
+	ids := make([]uint, 0, len(doc.Widgets))
+	for _, widget := range doc.Widgets {
+		if widget.Config.DatasetID != nil {
+			ids = append(ids, *widget.Config.DatasetID)
+		}
+	}
+	ids = uniqueUint(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	var datasets []models.Dataset
+	if err := h.DB.Where("project_id = ? AND id IN ?", projectID, ids).Find(&datasets).Error; err != nil {
+		return fmt.Errorf("dataset reference validation failed")
+	}
+	if len(datasets) != len(ids) {
+		return fmt.Errorf("dataset reference is outside project scope")
+	}
+	datasetByID := make(map[uint]models.Dataset, len(datasets))
+	for _, dataset := range datasets {
+		datasetByID[dataset.ID] = dataset
+	}
+	fieldSets := make(map[uint]struct {
+		dimensions map[string]bool
+		measures   map[string]bool
+	})
+	for _, widget := range doc.Widgets {
+		if widget.Config.DatasetID == nil {
+			continue
+		}
+		dataset := datasetByID[*widget.Config.DatasetID]
+		fields, ok := fieldSets[dataset.ID]
+		if !ok {
+			dimensions, measures, err := parseDatasetFields(dataset)
+			if err != nil {
+				return fmt.Errorf("dataset field validation failed")
+			}
+			fields = struct {
+				dimensions map[string]bool
+				measures   map[string]bool
+			}{
+				dimensions: fieldNameSet(dimensions),
+				measures:   fieldNameSet(measures),
+			}
+			fieldSets[dataset.ID] = fields
+		}
+		for _, field := range widget.Config.Dimensions {
+			if !fields.dimensions[field] {
+				return fmt.Errorf("widget %s dimension field %s does not exist in dataset", widget.ID, field)
+			}
+		}
+		for _, field := range widget.Config.Measures {
+			if !fields.measures[field] {
+				return fmt.Errorf("widget %s measure field %s does not exist in dataset", widget.ID, field)
+			}
+		}
+	}
+	return nil
+}
+
+func fieldNameSet(fields []datasetField) map[string]bool {
+	out := make(map[string]bool, len(fields))
+	for _, field := range fields {
+		out[field.Name] = true
+	}
+	return out
+}
+
+func (h ChartHandler) groupExists(groupID uint, projectID uint) bool {
 	var count int64
-	if err := h.DB.Model(&models.ChartGroup{}).Where("id = ?", groupID).Count(&count).Error; err != nil {
+	if err := h.DB.Model(&models.ChartGroup{}).Where("project_id = ? AND id = ?", projectID, groupID).Count(&count).Error; err != nil {
 		return false
 	}
 	return count > 0
 }
 
 func (h ChartHandler) groupWithDescendants(groupID uint) []uint {
+	var root models.ChartGroup
+	if err := h.DB.Select("id", "project_id").First(&root, groupID).Error; err != nil {
+		return []uint{groupID}
+	}
 	var groups []models.ChartGroup
-	if err := h.DB.Select("id", "parent_id").Find(&groups).Error; err != nil {
+	if err := h.DB.Select("id", "parent_id").Where("project_id = ?", root.ProjectID).Find(&groups).Error; err != nil {
 		return []uint{groupID}
 	}
 

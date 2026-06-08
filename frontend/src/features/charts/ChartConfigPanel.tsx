@@ -15,9 +15,10 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from '@/api/client';
 import dimensionFieldIcon from '@/assets/dimension-field-icon.svg';
 import measureFieldIcon from '@/assets/measure-field-icon.svg';
+import { getChartDefinition } from '@/features/charts/chartUtils';
 import { useDesignerStore } from '@/store/designerStore';
 import { useWorkspaceStore } from '@/store/workspaceStore';
-import type { ChartConfig, ChartWidget, DatasetField, DatasetQueryConfig, DatasetSummary, DatasetType } from '@/types/domain';
+import type { ChartConfig, ChartWidget, DatasetField, DatasetQueryConfig, DatasetSummary, DatasetType, MetricAggregation, QuerySort } from '@/types/domain';
 import { chartTypeLabels, datasetTypeLabels } from '@/types/domain';
 
 interface DatasetFieldSet {
@@ -90,6 +91,8 @@ function SelectedChartConfigPanel({
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
   const isTextWidget = selectedWidget.type === 'text' || selectedWidget.type === 'richText';
+  const chartDefinition = getChartDefinition(selectedWidget.type);
+  const previewValidation = validatePreviewRequirements(selectedWidget, datasetFields);
 
   useEffect(() => {
     if (selectedWidget) {
@@ -211,8 +214,8 @@ function SelectedChartConfigPanel({
       message.warning('请先选择数据集');
       return;
     }
-    if (!selectedWidget.config.dimensions.length || !selectedWidget.config.measures.length) {
-      message.warning('请先配置维度和指标');
+    if (!previewValidation.canPreview) {
+      message.warning(previewValidation.reasons[0] ?? '图表配置不完整');
       return;
     }
     setUpdatingPreview(true);
@@ -264,9 +267,34 @@ function SelectedChartConfigPanel({
     setQueryError(null);
   };
 
-  const canUpdatePreview = Boolean(
-    !isTextWidget && selectedWidget.config.datasetId && selectedWidget.config.dimensions.length && selectedWidget.config.measures.length
-  );
+  const changeMetricAggregation = (field: string, aggregation: MetricAggregation) => {
+    const currentMetrics = selectedWidget.config.query?.metrics ?? [];
+    const currentByField = new Map(currentMetrics.map((metric) => [metric.field, metric]));
+    const metrics = (selectedWidget.config.measures ?? []).map((measure) => ({
+      field: measure,
+      aggregation: measure === field ? aggregation : currentByField.get(measure)?.aggregation ?? 'sum',
+      alias: currentByField.get(measure)?.alias ?? measure
+    }));
+    const currentQuery = selectedWidget.config.query ?? buildQueryConfig(selectedWidget.config);
+    const nextQuery = buildQueryConfig({ ...selectedWidget.config, query: { ...currentQuery, metrics } });
+    form.setFieldValue('query', nextQuery);
+    updateWidgetConfig(selectedWidget.id, { query: nextQuery });
+  };
+
+  const changeQueryOptions = (patch: Partial<DatasetQueryConfig>) => {
+    const currentQuery = selectedWidget.config.query ?? buildQueryConfig(selectedWidget.config);
+    const nextQuery = buildQueryConfig({ ...selectedWidget.config, query: { ...currentQuery, ...patch } });
+    form.setFieldValue('query', nextQuery);
+    updateWidgetConfig(selectedWidget.id, { query: nextQuery });
+  };
+
+  const changePrimarySort = (patch: Partial<QuerySort>) => {
+    const current = selectedWidget.config.query?.sorts?.[0] ?? { field: '', order: 'desc' as const };
+    const next = { ...current, ...patch };
+    changeQueryOptions({ sorts: next.field ? [next] : [] });
+  };
+
+  const canUpdatePreview = previewValidation.canPreview;
 
   if (isTextWidget) {
     return <RichTextConfigPanel selectedWidget={selectedWidget} onConfigChange={(patch) => updateWidgetConfig(selectedWidget.id, patch)} />;
@@ -312,6 +340,9 @@ function SelectedChartConfigPanel({
                         {chartTypeLabels[selectedWidget.type]}
                       </Typography.Text>
                       <section className="config-section">
+                        <Typography.Text className="config-section-title">
+                          字段要求：维度 {chartDefinition.minDimensions} / 指标 {chartDefinition.minMeasures}
+                        </Typography.Text>
                         <Form.Item label="维度">
                           <SelectedFieldDropZone
                             role="dimensions"
@@ -341,6 +372,63 @@ function SelectedChartConfigPanel({
                           />
                         </Form.Item>
                       </section>
+                      <section className="config-section">
+                        <Typography.Text className="config-section-title">查询设置</Typography.Text>
+                        {(selectedWidget.config.measures ?? []).map((field) => (
+                          <div key={field} className="query-option-row">
+                            <Typography.Text className="query-option-label">{selectedWidget.config.fieldLabels?.[field] ?? field}</Typography.Text>
+                            <Select
+                              value={metricAggregationFor(selectedWidget.config, field)}
+                              options={aggregationOptions}
+                              onChange={(value) => changeMetricAggregation(field, value as MetricAggregation)}
+                            />
+                          </div>
+                        ))}
+                        <div className="query-option-row">
+                          <Typography.Text className="query-option-label">排序字段</Typography.Text>
+                          <Select
+                            allowClear
+                            value={selectedWidget.config.query?.sorts?.[0]?.field}
+                            placeholder="不排序"
+                            options={queryFieldOptions(selectedWidget.config)}
+                            onChange={(field) => changePrimarySort({ field: field ? String(field) : '' })}
+                          />
+                        </div>
+                        <div className="query-option-row">
+                          <Typography.Text className="query-option-label">排序方向</Typography.Text>
+                          <Select
+                            value={selectedWidget.config.query?.sorts?.[0]?.order ?? 'desc'}
+                            disabled={!selectedWidget.config.query?.sorts?.[0]?.field}
+                            options={[
+                              { value: 'desc', label: '降序' },
+                            { value: 'asc', label: '升序' }
+                          ]}
+                            onChange={(order) => changePrimarySort({ order: order as QuerySort['order'] })}
+                          />
+                        </div>
+                        <div className="query-number-grid">
+                          <div>
+                            <Typography.Text className="query-option-label">TopN</Typography.Text>
+                            <InputNumber
+                              className="full-width"
+                              min={0}
+                              max={5000}
+                              value={selectedWidget.config.query?.topN ?? 0}
+                              onChange={(value) => changeQueryOptions({ topN: Number(value ?? 0) })}
+                            />
+                          </div>
+                          <div>
+                            <Typography.Text className="query-option-label">Limit</Typography.Text>
+                            <InputNumber
+                              className="full-width"
+                              min={1}
+                              max={5000}
+                              value={selectedWidget.config.query?.limit ?? 500}
+                              onChange={(value) => changeQueryOptions({ limit: Number(value ?? 500) })}
+                            />
+                          </div>
+                        </div>
+                      </section>
                       <Button
                         block
                         type="primary"
@@ -351,6 +439,9 @@ function SelectedChartConfigPanel({
                       >
                         更新图表
                       </Button>
+                      {!canUpdatePreview && previewValidation.reasons.length > 0 && (
+                        <Alert className="inline-alert preview-query-alert" type="warning" showIcon message="图表配置不完整" description={previewValidation.reasons.join('；')} />
+                      )}
                       {runtimeRows.length ? (
                         <Typography.Text className="preview-data-status" type="secondary">
                           已加载 {runtimeRows.length} 条数据
@@ -456,7 +547,8 @@ function SelectedChartConfigPanel({
               placeholder="先选类型"
               options={[
                 { value: 'standard', label: datasetTypeLabels.standard },
-                { value: 'direct', label: datasetTypeLabels.direct }
+                { value: 'direct', label: datasetTypeLabels.direct },
+                { value: 'sql', label: datasetTypeLabels.sql }
               ]}
               onChange={changeDatasetType}
             />
@@ -642,16 +734,67 @@ function buildFieldLabels(fields: DatasetFieldSet): Record<string, string> {
   }, {});
 }
 
+const aggregationOptions: Array<{ value: MetricAggregation; label: string }> = [
+  { value: 'sum', label: '求和' },
+  { value: 'avg', label: '平均' },
+  { value: 'count', label: '计数' },
+  { value: 'min', label: '最小值' },
+  { value: 'max', label: '最大值' }
+];
+
+function validatePreviewRequirements(widget: ChartWidget, fields: DatasetFieldSet | null): { canPreview: boolean; reasons: string[] } {
+  const definition = getChartDefinition(widget.type);
+  if (!definition.requiresDataset) {
+    return { canPreview: true, reasons: [] };
+  }
+  const reasons: string[] = [];
+  if (!widget.config.datasetId) {
+    reasons.push('请选择数据集');
+  }
+  if ((widget.config.dimensions ?? []).length < definition.minDimensions) {
+    reasons.push(`${chartTypeLabels[widget.type]} 至少需要 ${definition.minDimensions} 个维度`);
+  }
+  if ((widget.config.measures ?? []).length < definition.minMeasures) {
+    reasons.push(`${chartTypeLabels[widget.type]} 至少需要 ${definition.minMeasures} 个指标`);
+  }
+  if (widget.config.datasetId && !fields) {
+    reasons.push('字段元信息尚未加载完成');
+  }
+  if (fields) {
+    const names = new Set([...fields.dimensions, ...fields.measures].map((field) => field.name));
+    const missing = [...(widget.config.dimensions ?? []), ...(widget.config.measures ?? [])].filter((field) => !names.has(field));
+    if (missing.length > 0) {
+      reasons.push(`字段不存在或已变更：${missing.join('、')}`);
+    }
+  }
+  return { canPreview: reasons.length === 0, reasons };
+}
+
+function metricAggregationFor(config: ChartConfig, field: string): MetricAggregation {
+  return config.query?.metrics?.find((metric) => metric.field === field)?.aggregation ?? 'sum';
+}
+
+function queryFieldOptions(config: ChartConfig): Array<{ value: string; label: string }> {
+  return [...(config.dimensions ?? []), ...(config.measures ?? [])].map((field) => ({
+    value: field,
+    label: config.fieldLabels?.[field] ?? field
+  }));
+}
+
 function buildQueryConfig(config: ChartConfig): DatasetQueryConfig {
+  const currentMetrics = new Map((config.query?.metrics ?? []).map((metric) => [metric.field, metric]));
+  const dimensions = config.dimensions ?? [];
+  const measures = config.measures ?? [];
+  const validSortFields = new Set([...dimensions, ...measures]);
   return {
-    dimensions: config.dimensions ?? [],
-    metrics: (config.measures ?? []).map((field) => ({
+    dimensions,
+    metrics: measures.map((field) => ({
       field,
-      aggregation: 'sum',
-      alias: field
+      aggregation: currentMetrics.get(field)?.aggregation ?? 'sum',
+      alias: currentMetrics.get(field)?.alias ?? field
     })),
     filters: config.query?.filters ?? [],
-    sorts: config.query?.sorts ?? [],
+    sorts: (config.query?.sorts ?? []).filter((sort) => validSortFields.has(sort.field)),
     topN: config.query?.topN,
     limit: config.query?.limit ?? 500,
     timeComparison: config.query?.timeComparison ?? 'none'

@@ -38,7 +38,10 @@ func runDatasetRefreshTick(ctx context.Context, db *gorm.DB, cfg config.Config) 
 		if dataset.LastRefreshAt != nil && dataset.LastRefreshAt.Add(time.Duration(dataset.RefreshEvery)*time.Second).After(now) {
 			continue
 		}
-		if _, err := ExecuteDatasetQuery(ctx, db, cfg, dataset.ID, DatasetQueryRequest{Limit: dataset.RowLimit}); err != nil {
+		if _, err := ExecuteDatasetQuery(ctx, db, cfg, DatasetQueryContext{
+			ProjectID: dataset.ProjectID,
+			Source:    DatasetQuerySourceScheduler,
+		}, dataset.ID, DatasetQueryRequest{Limit: dataset.RowLimit}); err != nil {
 			log.Printf("dataset scheduler refresh dataset %d failed: %v", dataset.ID, err)
 			continue
 		}

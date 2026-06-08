@@ -20,17 +20,25 @@ interface ChartRuntimeProps {
 interface G2Runtime {
   line: () => G2Runtime;
   interval: () => G2Runtime;
-  render: () => void;
+  render: () => void | Promise<unknown>;
   destroy: () => void;
 }
 
 interface G2Mark {
   data: (data: DataRow[]) => G2Mark;
+  changeData?: (data: DataRow[]) => void | Promise<unknown>;
   encode: (key: string, value: string) => G2Mark;
   coordinate: (options: Record<string, unknown>) => G2Mark;
   transform: (options: Record<string, unknown>) => G2Mark;
   label: (options: Record<string, unknown>) => G2Mark;
   tooltip: (options: boolean | Record<string, unknown>) => G2Mark;
+}
+
+interface S2Runtime {
+  setDataCfg?: (dataCfg: Record<string, unknown>, reset?: boolean) => void;
+  setOptions?: (options: Record<string, unknown>, reset?: boolean) => void;
+  render: (options?: unknown) => void | Promise<unknown>;
+  destroy: () => void;
 }
 
 export function SafeChartRenderer(props: ChartRendererProps) {
@@ -108,14 +116,19 @@ function chartRenderInputsChanged(prevProps: ChartErrorBoundaryProps, nextProps:
 
 function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const runtimeRef = useRef<G2Runtime | null>(null);
+  const markRef = useRef<G2Mark | null>(null);
+  const latestRowsRef = useRef(rawRows);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  latestRowsRef.current = rawRows;
 
   useEffect(() => {
     if (!containerRef.current) {
       return undefined;
     }
     let destroyed = false;
-    let runtime: G2Runtime | null = null;
+    runtimeRef.current = null;
+    markRef.current = null;
     setRuntimeError(null);
 
     void import('@antv/g2').then(({ Chart }) => {
@@ -128,29 +141,23 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
           container: containerRef.current,
           autoFit: true
         });
-        runtime = chart as unknown as G2Runtime;
-        const rows = normalizedRows(widget, rawRows);
-        const primaryDimension = widget.config.dimensions[0] ?? 'category';
-        const seriesDimension = widget.config.dimensions[1];
-        const xField = displayFieldName(widget, primaryDimension);
-        const colorField = seriesDimension ? displayFieldName(widget, seriesDimension) : undefined;
-        const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
-        const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
-        const intervalRows = collapseIntervalRows(rows, xField, yField, colorField);
+        const runtime = chart as unknown as G2Runtime;
+        runtimeRef.current = runtime;
+        const renderConfig = buildG2RenderConfig(widget, latestRowsRef.current);
 
         let mark: G2Mark | null = null;
         if (widget.type === 'line') {
           mark = runtime.line() as unknown as G2Mark;
-          mark.data(intervalRows).encode('x', xField).encode('y', yField);
-          if (colorField) {
-            mark.encode('color', colorField);
+          mark.data(renderConfig.markData).encode('x', renderConfig.xField).encode('y', renderConfig.yField);
+          if (renderConfig.colorField) {
+            mark.encode('color', renderConfig.colorField);
           }
         }
         if (widget.type === 'column' || widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
           mark = runtime.interval() as unknown as G2Mark;
-          mark.data(intervalRows).encode('x', xField).encode('y', yField);
-          if (colorField) {
-            mark.encode('color', colorField);
+          mark.data(renderConfig.markData).encode('x', renderConfig.xField).encode('y', renderConfig.yField);
+          if (renderConfig.colorField) {
+            mark.encode('color', renderConfig.colorField);
           }
           if (widget.type === 'stackedColumn' || widget.type === 'percentStackedColumn') {
             mark.transform({ type: 'stackY' });
@@ -162,12 +169,12 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         if (widget.type === 'bar' || widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
           mark = runtime.interval() as unknown as G2Mark;
           mark
-            .data(intervalRows)
+            .data(renderConfig.markData)
             .coordinate({ transform: [{ type: 'transpose' }] })
-            .encode('x', xField)
-            .encode('y', yField);
-          if (colorField) {
-            mark.encode('color', colorField);
+            .encode('x', renderConfig.xField)
+            .encode('y', renderConfig.yField);
+          if (renderConfig.colorField) {
+            mark.encode('color', renderConfig.colorField);
           }
           if (widget.type === 'stackedBar' || widget.type === 'percentStackedBar') {
             mark.transform({ type: 'stackY' });
@@ -179,24 +186,30 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
         if (widget.type === 'pie' || widget.type === 'donut') {
           mark = runtime.interval() as unknown as G2Mark;
           mark
-            .data(collapseIntervalRows(rows, xField, yField))
+            .data(renderConfig.markData)
             .coordinate({ type: 'theta', outerRadius: 0.82, innerRadius: widget.type === 'donut' ? 0.58 : 0 })
             .transform({ type: 'stackY' })
-            .encode('y', yField)
-            .encode('color', xField);
+            .encode('y', renderConfig.yField)
+            .encode('color', renderConfig.xField);
         }
 
         if (mark) {
-          mark.tooltip(widget.config.showTooltip ? { title: xField, items: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField] } : false);
+          mark.tooltip(widget.config.showTooltip ? { title: renderConfig.xField, items: renderConfig.tooltipFields } : false);
           if (widget.config.showLabel) {
-            mark.label({ text: labelField, style: { fontSize: widget.config.labelSize ?? 12 } });
+            mark.label({ text: renderConfig.labelField, style: { fontSize: widget.config.labelSize ?? 12 } });
           }
         }
-        runtime.render();
-        recordPerformanceMetric('CHART_RENDER', performance.now() - renderStart);
+        markRef.current = mark;
+        emitRendererLifecycle(widget, 'g2', 'init');
+        recordRenderCompletion(runtime.render(), renderStart, (message) => {
+          if (!destroyed) {
+            setRuntimeError(message);
+          }
+        });
       } catch (err) {
-        runtime?.destroy();
-        runtime = null;
+        runtimeRef.current?.destroy();
+        runtimeRef.current = null;
+        markRef.current = null;
         if (!destroyed) {
           setRuntimeError(err instanceof Error ? err.message : 'G2 图表渲染失败');
         }
@@ -209,7 +222,12 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
 
     return () => {
       destroyed = true;
-      runtime?.destroy();
+      if (runtimeRef.current) {
+        emitRendererLifecycle(widget, 'g2', 'destroy');
+      }
+      runtimeRef.current?.destroy();
+      runtimeRef.current = null;
+      markRef.current = null;
     };
   }, [
     widget.config.dimensions,
@@ -219,11 +237,25 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
     widget.config.measures,
     widget.config.showLabel,
     widget.config.showTooltip,
-    widget.height,
-    rawRows,
-    widget.type,
-    widget.width
+    widget.type
   ]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    const mark = markRef.current;
+    if (!runtime || !mark) {
+      return;
+    }
+    const renderStart = performance.now();
+    const renderConfig = buildG2RenderConfig(widget, rawRows);
+    emitRendererLifecycle(widget, 'g2', 'update');
+    if (mark.changeData) {
+      recordRenderCompletion(mark.changeData(renderConfig.markData), renderStart, (message) => setRuntimeError(message));
+      return;
+    }
+    mark.data(renderConfig.markData);
+    recordRenderCompletion(runtime.render(), renderStart, (message) => setRuntimeError(message));
+  }, [rawRows, widget, widget.config.dimensions, widget.config.fieldLabels, widget.config.measures, widget.type]);
 
   if (runtimeError) {
     return <ChartRenderError widget={widget} message={runtimeError} />;
@@ -239,14 +271,17 @@ function G2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
 
 function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const sheetRef = useRef<S2Runtime | null>(null);
+  const latestRowsRef = useRef(rawRows);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  latestRowsRef.current = rawRows;
 
   useEffect(() => {
     if (!containerRef.current) {
       return undefined;
     }
     let destroyed = false;
-    let sheet: { render: () => void; destroy: () => void } | null = null;
+    sheetRef.current = null;
     setRuntimeError(null);
 
     void import('@antv/s2').then(({ PivotSheet, TableSheet }) => {
@@ -255,48 +290,18 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
       }
       try {
         const renderStart = performance.now();
-        const rows = normalizedRows(widget, rawRows);
-        const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
-        const measures = (widget.config.measures.length ? widget.config.measures : ['value', 'lastYear']).map((field) => displayFieldName(widget, field));
-        const dataCfg =
-          widget.type === 'detailTable'
-            ? {
-                fields: {
-                  columns: [...dimensions, ...measures]
-                },
-                data: rows
-              }
-            : {
-                fields: {
-                  rows: [dimensions[0]],
-                  columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? displayFieldName(widget, 'month')],
-                  values: measures,
-                  valueInCols: true
-                },
-                data: rows
-              };
-
-        const options: Record<string, unknown> = {
-          width: Math.max(widget.width - 32, 280),
-          height: Math.max(widget.height - 60, 200),
-          tooltip: { showTooltip: widget.config.showTooltip },
-          interaction: { hoverHighlight: true },
-          style: {
-            cellCfg: {
-              height: 34
-            }
-          },
-          showDefaultHeaderActionIcon: false,
-          frozen: widget.config.showScrollbar ? { rowHeader: true } : undefined
-        };
-
         const Sheet = widget.type === 'detailTable' ? TableSheet : PivotSheet;
-        sheet = new Sheet(containerRef.current, dataCfg, options as never);
-        sheet.render();
-        recordPerformanceMetric('CHART_RENDER', performance.now() - renderStart);
+        const sheet = new Sheet(containerRef.current, buildS2DataConfig(widget, latestRowsRef.current) as never, buildS2Options(widget) as never) as unknown as S2Runtime;
+        sheetRef.current = sheet;
+        emitRendererLifecycle(widget, 's2', 'init');
+        recordRenderCompletion(sheet.render(), renderStart, (message) => {
+          if (!destroyed) {
+            setRuntimeError(message);
+          }
+        });
       } catch (err) {
-        sheet?.destroy();
-        sheet = null;
+        sheetRef.current?.destroy();
+        sheetRef.current = null;
         if (!destroyed) {
           setRuntimeError(err instanceof Error ? err.message : 'S2 表格渲染失败');
         }
@@ -309,19 +314,35 @@ function S2Renderer({ widget, rows: rawRows }: ChartRuntimeProps) {
 
     return () => {
       destroyed = true;
-      sheet?.destroy();
+      if (sheetRef.current) {
+        emitRendererLifecycle(widget, 's2', 'destroy');
+      }
+      sheetRef.current?.destroy();
+      sheetRef.current = null;
     };
-  }, [
-    widget.config.dimensions,
-    widget.config.fieldLabels,
-    widget.config.measures,
-    widget.config.showScrollbar,
-    widget.config.showTooltip,
-    widget.height,
-    rawRows,
-    widget.type,
-    widget.width
-  ]);
+  }, [widget.type]);
+
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) {
+      return;
+    }
+    const renderStart = performance.now();
+    sheet.setDataCfg?.(buildS2DataConfig(widget, rawRows), true);
+    emitRendererLifecycle(widget, 's2', 'update');
+    recordRenderCompletion(sheet.render(false), renderStart, (message) => setRuntimeError(message));
+  }, [rawRows, widget, widget.config.dimensions, widget.config.fieldLabels, widget.config.measures, widget.type]);
+
+  useEffect(() => {
+    const sheet = sheetRef.current;
+    if (!sheet) {
+      return;
+    }
+    const renderStart = performance.now();
+    sheet.setOptions?.(buildS2Options(widget), false);
+    emitRendererLifecycle(widget, 's2', 'update');
+    recordRenderCompletion(sheet.render(false), renderStart, (message) => setRuntimeError(message));
+  }, [widget.config.showScrollbar, widget.config.showTooltip, widget.height, widget.width]);
 
   if (runtimeError) {
     return <ChartRenderError widget={widget} message={runtimeError} />;
@@ -412,6 +433,91 @@ function normalizedRows(widget: ChartWidget, rows: DataRow[]): DataRow[] {
     });
     return next;
   });
+}
+
+function buildG2RenderConfig(widget: ChartWidget, rawRows: DataRow[]) {
+  const rows = normalizedRows(widget, rawRows);
+  const primaryDimension = widget.config.dimensions[0] ?? 'category';
+  const seriesDimension = widget.config.dimensions[1];
+  const xField = displayFieldName(widget, primaryDimension);
+  const colorField = seriesDimension ? displayFieldName(widget, seriesDimension) : undefined;
+  const yField = displayFieldName(widget, widget.config.measures[0] ?? 'value');
+  const labelField = displayFieldName(widget, widget.config.labelField || widget.config.measures[0] || 'value');
+  const markData = widget.type === 'pie' || widget.type === 'donut' ? collapseIntervalRows(rows, xField, yField) : collapseIntervalRows(rows, xField, yField, colorField);
+
+  return {
+    markData,
+    xField,
+    yField,
+    colorField,
+    labelField,
+    tooltipFields: widget.config.measures.length ? widget.config.measures.map((field) => displayFieldName(widget, field)) : [yField]
+  };
+}
+
+function buildS2DataConfig(widget: ChartWidget, rawRows: DataRow[]): Record<string, unknown> {
+  const rows = normalizedRows(widget, rawRows);
+  const dimensions = (widget.config.dimensions.length ? widget.config.dimensions : ['category']).map((field) => displayFieldName(widget, field));
+  const configuredMeasures = widget.config.measures.map((field) => displayFieldName(widget, field));
+  const measures = widget.type === 'detailTable' ? configuredMeasures : configuredMeasures.length ? configuredMeasures : ['value', 'lastYear'].map((field) => displayFieldName(widget, field));
+  if (widget.type === 'detailTable') {
+    return {
+      fields: {
+        columns: [...dimensions, ...measures]
+      },
+      data: rows
+    };
+  }
+  return {
+    fields: {
+      rows: [dimensions[0]],
+      columns: widget.type === 'comparisonTable' ? [dimensions[1] ?? dimensions[0]] : [dimensions[1] ?? displayFieldName(widget, 'month')],
+      values: measures,
+      valueInCols: true
+    },
+    data: rows
+  };
+}
+
+function buildS2Options(widget: ChartWidget): Record<string, unknown> {
+  return {
+    width: Math.max(widget.width - 32, 280),
+    height: Math.max(widget.height - 60, 200),
+    tooltip: { showTooltip: widget.config.showTooltip },
+    interaction: { hoverHighlight: true },
+    style: {
+      cellCfg: {
+        height: 34
+      }
+    },
+    showDefaultHeaderActionIcon: false,
+    frozen: widget.config.showScrollbar ? { rowHeader: true } : undefined
+  };
+}
+
+function recordRenderCompletion(result: void | Promise<unknown>, renderStart: number, onError: (message: string) => void) {
+  recordPerformanceMetric('CHART_RENDER', performance.now() - renderStart);
+  if (result && typeof (result as Promise<unknown>).then === 'function') {
+    void (result as Promise<unknown>)
+      .catch((err: unknown) => onError(err instanceof Error ? err.message : '图表渲染失败'));
+  }
+}
+
+function emitRendererLifecycle(widget: ChartWidget, renderer: 'g2' | 's2', action: 'init' | 'update' | 'destroy') {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent('lightbi:renderer-lifecycle', {
+      detail: {
+        widgetId: widget.id,
+        chartType: widget.type,
+        renderer,
+        action,
+        timestamp: Date.now()
+      }
+    })
+  );
 }
 
 function isTextWidget(widget: ChartWidget): boolean {

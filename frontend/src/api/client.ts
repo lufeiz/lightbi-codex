@@ -5,6 +5,7 @@ import type {
   ChartGroup,
   ChartListResponse,
   ChartMutationPayload,
+  ChartPublishResponse,
   ChartQuery,
   ChartTag,
   DataSourceMutationPayload,
@@ -38,11 +39,17 @@ interface APIEnvelope<T> {
 }
 
 const API_BASE_URL = process.env.API_BASE_URL ?? '/api';
+const DATASET_QUERY_CACHE_TTL_MS = 30_000;
 
 let memoryAccessToken: string | null = null;
 let refreshPromise: Promise<AuthResponse> | null = null;
+const datasetQueryInFlight = new Map<string, Promise<DatasetQueryResponse>>();
+const datasetQueryCache = new Map<string, { expiresAt: number; response: DatasetQueryResponse }>();
 
 export function setApiAccessToken(token: string | null): void {
+  if (memoryAccessToken !== token) {
+    clearDatasetQueryClientCache();
+  }
   memoryAccessToken = token;
 }
 
@@ -111,6 +118,64 @@ function toQuery(params: object): string {
   });
   const query = search.toString();
   return query ? `?${query}` : '';
+}
+
+function requestDatasetQuery(path: string, payload: DatasetQueryRequest): Promise<DatasetQueryResponse> {
+  const cacheKey = datasetQueryCacheKey(path, payload);
+  const cached = datasetQueryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return Promise.resolve(cloneDatasetQueryResponse(cached.response));
+  }
+  const pending = datasetQueryInFlight.get(cacheKey);
+  if (pending) {
+    return pending.then(cloneDatasetQueryResponse);
+  }
+  const next = request<DatasetQueryResponse>(path, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  })
+    .then((response) => {
+      datasetQueryCache.set(cacheKey, {
+        expiresAt: Date.now() + DATASET_QUERY_CACHE_TTL_MS,
+        response
+      });
+      return response;
+    })
+    .finally(() => {
+      datasetQueryInFlight.delete(cacheKey);
+    });
+  datasetQueryInFlight.set(cacheKey, next);
+  return next.then(cloneDatasetQueryResponse);
+}
+
+function clearDatasetQueryClientCache() {
+  datasetQueryInFlight.clear();
+  datasetQueryCache.clear();
+}
+
+function datasetQueryCacheKey(path: string, payload: DatasetQueryRequest): string {
+  return `${path}:${stableStringify(payload)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nextValue]) => `${JSON.stringify(key)}:${stableStringify(nextValue)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function cloneDatasetQueryResponse(response: DatasetQueryResponse): DatasetQueryResponse {
+  return {
+    ...response,
+    columns: response.columns.map((column) => ({ ...column })),
+    rows: response.rows.map((row) => ({ ...row }))
+  };
 }
 
 export const api = {
@@ -219,8 +284,11 @@ export const api = {
   copyChart(id: number) {
     return request<ChartAsset>(`/charts/${id}/copy`, { method: 'POST' });
   },
-  publishChart(id: number) {
-    return request<ChartAsset>(`/charts/${id}/publish`, { method: 'POST' });
+  publishChart(id: number, payload?: ChartMutationPayload) {
+    return request<ChartPublishResponse>(`/charts/${id}/publish`, {
+      method: 'POST',
+      body: payload ? JSON.stringify(payload) : undefined
+    });
   },
   archiveChart(id: number) {
     return request<ChartAsset>(`/charts/${id}/archive`, { method: 'POST' });
@@ -354,6 +422,12 @@ export const api = {
       body: JSON.stringify(payload)
     });
   },
+  previewDatasetDraft(payload: DatasetMutationPayload, query: DatasetQueryRequest) {
+    return request<DatasetQueryResponse>('/datasets/preview', {
+      method: 'POST',
+      body: JSON.stringify({ dataset: payload, query })
+    });
+  },
   updateDataset(id: number, payload: DatasetMutationPayload) {
     return request<DatasetSummary>(`/datasets/${id}`, {
       method: 'PUT',
@@ -370,16 +444,10 @@ export const api = {
     return request<NonNullable<DatasetDetail['rows']>>(`/datasets/${id}/rows`);
   },
   previewDataset(id: number, payload: DatasetQueryRequest) {
-    return request<DatasetQueryResponse>(`/datasets/${id}/preview`, {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
+    return requestDatasetQuery(`/datasets/${id}/preview`, payload);
   },
   queryDataset(id: number, payload: DatasetQueryRequest) {
-    return request<DatasetQueryResponse>(`/datasets/${id}/query`, {
-      method: 'POST',
-      body: JSON.stringify(payload)
-    });
+    return requestDatasetQuery(`/datasets/${id}/query`, payload);
   },
   refreshDataset(id: number) {
     return request<{ refreshed: boolean }>(`/datasets/${id}/refresh`, { method: 'POST' });

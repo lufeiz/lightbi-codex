@@ -38,7 +38,7 @@ export function PublishedDashboardPage() {
           <Button>编辑</Button>
         </Link>
       </Space>
-      <DashboardView chart={data.chart} runtimeRows={data.runtimeRows} />
+      <DashboardView chart={data.chart} runtimeRows={data.runtimeRows} runtimeStatus={data.runtimeStatus} />
     </main>
   );
 }

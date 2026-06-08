@@ -1,4 +1,3 @@
-import { Spin } from 'antd';
 import { useEffect } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 
@@ -17,7 +16,7 @@ export function RequireAuth() {
   if (!bootstrapped) {
     return (
       <div className="route-loading">
-        <Spin size="large" />
+        <span className="route-loading-indicator" />
       </div>
     );
   }

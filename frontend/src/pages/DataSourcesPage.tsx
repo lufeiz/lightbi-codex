@@ -1,15 +1,17 @@
 import { CheckCircleOutlined, DatabaseOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
+import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
 import type { DataSourceMutationPayload, DataSourceSummary } from '@/types/domain';
 import { dataSourceStatusLabels, dataSourceTypeLabels } from '@/types/domain';
 
 export function DataSourcesPage() {
+  const navigate = useNavigate();
   const [form] = Form.useForm<DataSourceMutationPayload>();
   const [items, setItems] = useState<DataSourceSummary[]>([]);
   const [loading, setLoading] = useState(false);
@@ -20,7 +22,9 @@ export function DataSourcesPage() {
   const user = useAuthStore((state) => state.user);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
-  const canWrite = user?.role === 'admin' || user?.role === 'editor';
+  const projectRole = useWorkspaceStore((state) => state.projectRole);
+  const canWrite = hasProjectWriteAccess(user, projectRole);
+  const createDisabledReason = !projectId ? '请先创建或选择项目' : !canWrite ? '当前项目无写权限' : '';
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -137,9 +141,25 @@ export function DataSourcesPage() {
           <Typography.Title level={3}>数据源管理</Typography.Title>
           <Typography.Text type="secondary">维护 MySQL 和 PostgreSQL 外部分析数据源。</Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => openModal()}>
-          新建数据源
-        </Button>
+        <Space direction="vertical" size={2} align="end">
+          <Tooltip title={createDisabledReason}>
+            <span>
+              <Button type="primary" icon={<PlusOutlined />} disabled={Boolean(createDisabledReason)} onClick={() => openModal()}>
+                新建数据源
+              </Button>
+            </span>
+          </Tooltip>
+          {createDisabledReason && (
+            <Typography.Text type="secondary" className="asset-action-hint">
+              {createDisabledReason}
+              {!projectId && (
+                <Button type="link" size="small" onClick={() => navigate('/workspaces')}>
+                  去创建项目
+                </Button>
+              )}
+            </Typography.Text>
+          )}
+        </Space>
       </div>
       <Table rowKey="id" loading={loading} columns={columns} dataSource={items} pagination={false} />
 

@@ -32,5 +32,5 @@ export function PublicDashboardPage({ embed = false }: PublicDashboardPageProps)
   if (error || !data) {
     return <Alert type="error" showIcon message={error ?? '分享链接不可用'} />;
   }
-  return <DashboardView chart={data.chart} runtimeRows={data.runtimeRows} embed={embed} />;
+  return <DashboardView chart={data.chart} runtimeRows={data.runtimeRows} runtimeStatus={data.runtimeStatus} embed={embed} />;
 }

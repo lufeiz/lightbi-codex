@@ -1,5 +1,5 @@
 import { ApartmentOutlined, PlusOutlined, TeamOutlined } from '@ant-design/icons';
-import { Button, Card, Form, Input, message, Modal, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
+import { Alert, Button, Card, Form, Input, message, Modal, Select, Space, Table, Tabs, Tag, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -41,7 +41,7 @@ export function WorkspacesPage() {
     const [workspaceData, projectData, userData] = await Promise.all([api.workspaces(), api.projects(selectedWorkspaceId ?? undefined), api.users().catch(() => [])]);
     setWorkspaces(workspaceData);
     setProjects(projectData);
-    setUsers(userData);
+    setUsers(Array.isArray(userData) ? userData : []);
     if (selectedWorkspaceId) {
       setWorkspaceMembers(await api.workspaceMembers(selectedWorkspaceId).catch(() => []));
     }
@@ -149,6 +149,30 @@ export function WorkspacesPage() {
           </Button>
         </Space>
       </div>
+
+      {(!selectedWorkspaceId || !selectedProjectId) && (
+        <Alert
+          className="workspace-onboarding-alert"
+          type="warning"
+          showIcon
+          message="请先完成工作空间和项目初始化"
+          description={selectedWorkspaceId ? '当前工作空间下还没有可用项目。创建项目后，数据源、数据集和仪表盘能力才会启用。' : 'LightBI 的资产必须归属到工作空间和项目。先创建工作空间，再创建默认项目。'}
+          action={
+            <Space>
+              {!selectedWorkspaceId && (
+                <Button size="small" type="primary" disabled={!canManage} onClick={() => setWorkspaceModalOpen(true)}>
+                  创建工作空间
+                </Button>
+              )}
+              {selectedWorkspaceId && !selectedProjectId && (
+                <Button size="small" type="primary" disabled={!canManage} onClick={() => setProjectModalOpen(true)}>
+                  创建项目
+                </Button>
+              )}
+            </Space>
+          }
+        />
+      )}
 
       <Tabs
         items={[

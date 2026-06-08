@@ -27,11 +27,34 @@ type DashboardHandler struct {
 }
 
 type publishedDashboard struct {
-	Chart       models.Chart                `json:"chart"`
-	Version     *models.ChartVersion        `json:"version,omitempty"`
-	ShareLink   *dashboardShareLinkDTO      `json:"shareLink,omitempty"`
-	RuntimeRows map[string][]map[string]any `json:"runtimeRows"`
-	Embed       bool                        `json:"embed"`
+	Chart         publishedChartDTO              `json:"chart"`
+	Version       *chartVersionDTO               `json:"version,omitempty"`
+	ShareLink     *dashboardShareLinkDTO         `json:"shareLink,omitempty"`
+	RuntimeRows   map[string][]map[string]any    `json:"runtimeRows"`
+	RuntimeStatus map[string]widgetRuntimeStatus `json:"runtimeStatus"`
+	Embed         bool                           `json:"embed"`
+}
+
+type publishedChartDTO struct {
+	ID          uint               `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Type        models.ChartType   `json:"type"`
+	Status      models.ChartStatus `json:"status"`
+	Config      datatypes.JSON     `json:"config"`
+	CreatedAt   time.Time          `json:"createdAt"`
+	UpdatedAt   time.Time          `json:"updatedAt"`
+}
+
+type widgetRuntimeStatus struct {
+	WidgetID   string     `json:"widgetId"`
+	Status     string     `json:"status"`
+	Cached     bool       `json:"cached"`
+	RowCount   int        `json:"rowCount"`
+	DurationMs int64      `json:"durationMs"`
+	ErrorCode  string     `json:"errorCode,omitempty"`
+	Message    string     `json:"message"`
+	ExecutedAt *time.Time `json:"executedAt,omitempty"`
 }
 
 type chartVersionDTO struct {
@@ -105,7 +128,14 @@ func (h DashboardHandler) Published(c *gin.Context) {
 		return
 	}
 	version := latestChartVersion(h.DB, chart.ID)
-	OK(c, publishedDashboard{Chart: chart, Version: version, RuntimeRows: h.runtimeRowsForChart(c, chart)})
+	snapshot := chartSnapshotForPublish(chart, version)
+	rows, statuses := h.runtimeRowsForChart(c, snapshot, services.DatasetQueryContext{
+		ProjectID: chart.ProjectID,
+		Source:    services.DatasetQuerySourcePublished,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	})
+	OK(c, publishedDashboard{Chart: toPublishedChartDTO(snapshot), Version: chartVersionPtrDTO(version), RuntimeRows: rows, RuntimeStatus: statuses})
 }
 
 func (h DashboardHandler) PublicShare(c *gin.Context) {
@@ -127,8 +157,21 @@ func (h DashboardHandler) publicDashboard(c *gin.Context, embed bool) {
 		return
 	}
 	version := latestChartVersion(h.DB, chart.ID)
+	snapshot := chartSnapshotForPublish(chart, version)
 	dto := toShareLinkDTO(link, "")
-	OK(c, publishedDashboard{Chart: chart, Version: version, ShareLink: &dto, RuntimeRows: h.runtimeRowsForChart(c, chart), Embed: embed})
+	source := services.DatasetQuerySourcePublic
+	if embed {
+		source = services.DatasetQuerySourceEmbed
+	}
+	rows, statuses := h.runtimeRowsForChart(c, snapshot, services.DatasetQueryContext{
+		ProjectID:   link.ProjectID,
+		Source:      source,
+		ShareLinkID: link.ID,
+		IP:          c.ClientIP(),
+		UserAgent:   c.Request.UserAgent(),
+	})
+	audit(h.DB, 0, chart.WorkspaceID, chart.ProjectID, "chart.public.view", "chart", chart.ID, "访问公开仪表盘", map[string]any{"shareLinkId": link.ID, "embed": embed})
+	OK(c, publishedDashboard{Chart: toPublishedChartDTO(snapshot), Version: publicChartVersionPtrDTO(version), ShareLink: &dto, RuntimeRows: rows, RuntimeStatus: statuses, Embed: embed})
 }
 
 func (h DashboardHandler) Versions(c *gin.Context) {
@@ -596,7 +639,14 @@ func (h DashboardHandler) rowsForExport(c *gin.Context, chart models.Chart, widg
 		if widget.Config.DatasetID == nil {
 			continue
 		}
-		response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, *widget.Config.DatasetID, widget.Config.Query)
+		user, _ := middleware.CurrentUser(c)
+		response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, services.DatasetQueryContext{
+			ActorID:   user.ID,
+			ProjectID: chart.ProjectID,
+			Source:    services.DatasetQuerySourceExport,
+			IP:        c.ClientIP(),
+			UserAgent: c.Request.UserAgent(),
+		}, *widget.Config.DatasetID, widget.Config.Query)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -614,11 +664,13 @@ func (h DashboardHandler) rowsForExport(c *gin.Context, chart models.Chart, widg
 	return nil, nil, fmt.Errorf("no queryable widget found")
 }
 
-func (h DashboardHandler) runtimeRowsForChart(c *gin.Context, chart models.Chart) map[string][]map[string]any {
+func (h DashboardHandler) runtimeRowsForChart(c *gin.Context, chart models.Chart, baseContext services.DatasetQueryContext) (map[string][]map[string]any, map[string]widgetRuntimeStatus) {
 	rows := map[string][]map[string]any{}
+	statuses := map[string]widgetRuntimeStatus{}
 	var doc struct {
 		Widgets []struct {
-			ID     string `json:"id"`
+			Type   models.ChartType `json:"type"`
+			ID     string           `json:"id"`
 			Config struct {
 				DatasetID *uint                        `json:"datasetId"`
 				Query     services.DatasetQueryRequest `json:"query"`
@@ -626,19 +678,52 @@ func (h DashboardHandler) runtimeRowsForChart(c *gin.Context, chart models.Chart
 		} `json:"widgets"`
 	}
 	if err := json.Unmarshal(chart.Config, &doc); err != nil {
-		return rows
+		return rows, statuses
 	}
 	for _, widget := range doc.Widgets {
 		if widget.Config.DatasetID == nil {
+			if widget.Type != models.ChartTypeText && widget.Type != models.ChartTypeRichText {
+				statuses[widget.ID] = widgetRuntimeStatus{
+					WidgetID:  widget.ID,
+					Status:    "empty",
+					ErrorCode: "NO_DATASET",
+					Message:   "该组件未配置数据源",
+				}
+			}
 			continue
 		}
-		response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, *widget.Config.DatasetID, widget.Config.Query)
+		start := time.Now()
+		response, err := services.ExecuteDatasetQuery(c.Request.Context(), h.DB, h.Config, baseContext, *widget.Config.DatasetID, widget.Config.Query)
+		duration := time.Since(start).Milliseconds()
 		if err != nil {
+			statuses[widget.ID] = widgetRuntimeStatus{
+				WidgetID:   widget.ID,
+				Status:     "error",
+				DurationMs: duration,
+				ErrorCode:  runtimeErrorCode(err),
+				Message:    safeRuntimeMessage(err),
+			}
 			continue
 		}
 		rows[widget.ID] = response.Rows
+		status := "success"
+		message := "数据加载成功"
+		if len(response.Rows) == 0 {
+			status = "empty"
+			message = "暂无数据"
+		}
+		executedAt := response.ExecutedAt
+		statuses[widget.ID] = widgetRuntimeStatus{
+			WidgetID:   widget.ID,
+			Status:     status,
+			Cached:     response.Cached,
+			RowCount:   len(response.Rows),
+			DurationMs: duration,
+			Message:    message,
+			ExecutedAt: &executedAt,
+		}
 	}
-	return rows
+	return rows, statuses
 }
 
 func snapshotChartVersion(db *gorm.DB, chart models.Chart, userID uint) (models.ChartVersion, error) {
@@ -656,6 +741,68 @@ func snapshotChartVersion(db *gorm.DB, chart models.Chart, userID uint) (models.
 		PublishedBy: userID,
 	}
 	return version, db.Create(&version).Error
+}
+
+func chartSnapshotForPublish(chart models.Chart, version *models.ChartVersion) models.Chart {
+	if version == nil {
+		return chart
+	}
+	chart.Name = version.Name
+	chart.Description = version.Description
+	chart.Type = version.Type
+	chart.Config = version.Config
+	return chart
+}
+
+func toPublishedChartDTO(chart models.Chart) publishedChartDTO {
+	return publishedChartDTO{
+		ID:          chart.ID,
+		Name:        chart.Name,
+		Description: chart.Description,
+		Type:        chart.Type,
+		Status:      chart.Status,
+		Config:      chart.Config,
+		CreatedAt:   chart.CreatedAt,
+		UpdatedAt:   chart.UpdatedAt,
+	}
+}
+
+func chartVersionPtrDTO(version *models.ChartVersion) *chartVersionDTO {
+	if version == nil {
+		return nil
+	}
+	dto := toChartVersionDTO(*version)
+	return &dto
+}
+
+func publicChartVersionPtrDTO(version *models.ChartVersion) *chartVersionDTO {
+	dto := chartVersionPtrDTO(version)
+	if dto != nil {
+		dto.Publisher = nil
+	}
+	return dto
+}
+
+func runtimeErrorCode(err error) string {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "outside project scope") || strings.Contains(message, "permission") {
+		return "DATASET_SCOPE_DENIED"
+	}
+	if strings.Contains(message, "invalid") {
+		return "QUERY_SCHEMA_INVALID"
+	}
+	return "QUERY_FAILED"
+}
+
+func safeRuntimeMessage(err error) string {
+	switch runtimeErrorCode(err) {
+	case "DATASET_SCOPE_DENIED":
+		return "数据集权限不足，请联系看板维护人"
+	case "QUERY_SCHEMA_INVALID":
+		return "图表字段配置已失效，请联系看板维护人"
+	default:
+		return "数据查询失败，请联系看板维护人"
+	}
 }
 
 func latestChartVersion(db *gorm.DB, chartID uint) *models.ChartVersion {

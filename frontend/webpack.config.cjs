@@ -54,6 +54,67 @@ module.exports = {
       'process.env.API_BASE_URL': JSON.stringify(apiBaseUrl)
     })
   ],
+  optimization: {
+    runtimeChunk: 'single',
+    splitChunks: {
+      chunks: 'async',
+      minSize: 20000,
+      maxAsyncSize: 240000,
+      cacheGroups: {
+        react: {
+          test: /[\\/]node_modules[\\/](react|react-dom|react-router-dom|scheduler)[\\/]/,
+          name: 'vendor-react',
+          chunks: 'initial',
+          priority: 30,
+          enforce: true
+        },
+        antd: {
+          test: /[\\/]node_modules[\\/](@ant-design|antd|rc-.*)[\\/]/,
+          name: 'vendor-antd',
+          chunks: 'initial',
+          maxInitialSize: 240000,
+          priority: 20,
+          reuseExistingChunk: true
+        },
+        antvG2: {
+          test: /[\\/]node_modules[\\/]@antv[\\/]g2[\\/]/,
+          name: 'vendor-antv-g2',
+          chunks: 'async',
+          priority: 40,
+          enforce: true
+        },
+        antvS2: {
+          test: /[\\/]node_modules[\\/]@antv[\\/]s2[\\/]/,
+          name: 'vendor-antv-s2',
+          chunks: 'async',
+          priority: 40,
+          enforce: true
+        },
+        antvX6: {
+          test: /[\\/]node_modules[\\/]@antv[\\/]x6[\\/]/,
+          name: 'vendor-antv-x6',
+          chunks: 'async',
+          priority: 40,
+          enforce: true
+        },
+        antvShared: {
+          test: /[\\/]node_modules[\\/]@antv[\\/]/,
+          name: 'vendor-antv-shared',
+          chunks: 'async',
+          priority: 15,
+          reuseExistingChunk: true
+        },
+        vendors: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendor',
+          chunks: 'async',
+          maxAsyncSize: 240000,
+          priority: 10,
+          reuseExistingChunk: true
+        }
+      }
+    }
+  },
   devServer: {
     port: 3000,
     historyApiFallback: true,

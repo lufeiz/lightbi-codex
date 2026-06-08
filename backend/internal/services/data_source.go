@@ -3,10 +3,13 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
@@ -16,9 +19,12 @@ import (
 )
 
 func OpenDataSource(ctx context.Context, source models.DataSource, credentialKey string) (*sql.DB, error) {
+	if err := ValidateDataSourceTarget(ctx, source, nil, false); err != nil {
+		return nil, err
+	}
 	password, err := DecryptSecret(credentialKey, source.PasswordCiphertext)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("data source credential is invalid")
 	}
 	dsn, err := DataSourceDSN(source, password)
 	if err != nil {
@@ -50,9 +56,16 @@ func OpenDataSource(ctx context.Context, source models.DataSource, credentialKey
 	}
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
-		return nil, err
+		return nil, errors.New("data source connection failed")
 	}
 	return db, nil
+}
+
+func OpenDataSourceWithNetworkPolicy(ctx context.Context, source models.DataSource, credentialKey string, allowedHosts []string, blockPrivateNetworks bool) (*sql.DB, error) {
+	if err := ValidateDataSourceTarget(ctx, source, allowedHosts, blockPrivateNetworks); err != nil {
+		return nil, err
+	}
+	return OpenDataSource(ctx, source, credentialKey)
 }
 
 func CloseDataSource(db *sql.DB) {
@@ -94,4 +107,92 @@ func DataSourceDSN(source models.DataSource, password string) (string, error) {
 	default:
 		return "", fmt.Errorf("unsupported data source type %s", source.Type)
 	}
+}
+
+func ValidateDataSourceTarget(ctx context.Context, source models.DataSource, allowedHosts []string, blockPrivateNetworks bool) error {
+	host := strings.TrimSpace(source.Host)
+	if host == "" {
+		return errors.New("data source host is required")
+	}
+	if len(allowedHosts) > 0 && !dataSourceHostAllowed(host, allowedHosts) {
+		return errors.New("data source host is not in the allowed list")
+	}
+	if !blockPrivateNetworks {
+		return nil
+	}
+	if ip, ok := parseHostIP(host); ok {
+		if !isPublicDataSourceIP(ip) {
+			return errors.New("data source host resolves to a private or unsafe network")
+		}
+		return nil
+	}
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return errors.New("data source host resolution failed")
+	}
+	if len(addrs) == 0 {
+		return errors.New("data source host resolution failed")
+	}
+	for _, addr := range addrs {
+		ip, ok := parseHostIP(addr.IP.String())
+		if !ok || !isPublicDataSourceIP(ip) {
+			return errors.New("data source host resolves to a private or unsafe network")
+		}
+	}
+	return nil
+}
+
+func dataSourceHostAllowed(host string, allowedHosts []string) bool {
+	host = normalizeDataSourceHost(host)
+	hostIP, hostIsIP := parseHostIP(host)
+	for _, allowed := range allowedHosts {
+		allowed = normalizeDataSourceHost(allowed)
+		if allowed == "" {
+			continue
+		}
+		if host == allowed {
+			return true
+		}
+		if strings.HasPrefix(allowed, "*.") && strings.HasSuffix(host, strings.TrimPrefix(allowed, "*")) {
+			return true
+		}
+		if hostIsIP {
+			if prefix, err := netip.ParsePrefix(allowed); err == nil && prefix.Contains(hostIP) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeDataSourceHost(host string) string {
+	host = strings.TrimSpace(strings.ToLower(host))
+	if strings.HasPrefix(host, "[") && strings.Contains(host, "]") {
+		if parsed, _, err := net.SplitHostPort(host); err == nil {
+			return strings.Trim(parsed, "[]")
+		}
+	}
+	if parsed, _, err := net.SplitHostPort(host); err == nil {
+		return parsed
+	}
+	return strings.Trim(host, "[]")
+}
+
+func parseHostIP(host string) (netip.Addr, bool) {
+	ip, err := netip.ParseAddr(normalizeDataSourceHost(host))
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	return ip.Unmap(), true
+}
+
+func isPublicDataSourceIP(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	return ip.IsGlobalUnicast() &&
+		!ip.IsPrivate() &&
+		!ip.IsLoopback() &&
+		!ip.IsLinkLocalUnicast() &&
+		!ip.IsLinkLocalMulticast() &&
+		!ip.IsMulticast() &&
+		!ip.IsUnspecified()
 }

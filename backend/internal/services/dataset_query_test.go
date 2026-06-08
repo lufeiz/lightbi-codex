@@ -71,6 +71,34 @@ func TestBuildDatasetSQLForMySQLAndPostgres(t *testing.T) {
 	}
 }
 
+func TestDraftSQLPreviewHelpers(t *testing.T) {
+	if got := normalizeDraftPreviewLimit(0); got != 20 {
+		t.Fatalf("expected default preview limit 20, got %d", got)
+	}
+	if got := normalizeDraftPreviewLimit(200); got != 100 {
+		t.Fatalf("expected preview limit capped at 100, got %d", got)
+	}
+	query := buildDraftSQLPreviewQuery("select region, revenue from orders", 20)
+	if query != "SELECT * FROM (select region, revenue from orders) AS dataset_base LIMIT 20" {
+		t.Fatalf("unexpected draft preview query: %s", query)
+	}
+	for _, item := range []struct {
+		databaseType string
+		sample       any
+		expected     string
+	}{
+		{databaseType: "VARCHAR", sample: "华东", expected: "string"},
+		{databaseType: "DECIMAL", sample: nil, expected: "number"},
+		{databaseType: "TIMESTAMP", sample: nil, expected: "date"},
+		{databaseType: "", sample: float64(12.5), expected: "number"},
+		{databaseType: "", sample: time.Now(), expected: "date"},
+	} {
+		if got := inferDatasetFieldType(item.databaseType, item.sample); got != item.expected {
+			t.Fatalf("inferDatasetFieldType(%q, %#v) = %s, want %s", item.databaseType, item.sample, got, item.expected)
+		}
+	}
+}
+
 func TestExecuteDatasetQueryWritesAuditLog(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "query-log.db")), &gorm.Config{})
 	if err != nil {
@@ -97,7 +125,11 @@ func TestExecuteDatasetQueryWritesAuditLog(t *testing.T) {
 		t.Fatalf("create dataset: %v", err)
 	}
 
-	response, err := ExecuteDatasetQuery(context.Background(), db, config.Config{QueryMaxConcurrent: 2, QueryLogRetentionDays: 30}, dataset.ID, DatasetQueryRequest{
+	response, err := ExecuteDatasetQuery(context.Background(), db, config.Config{QueryMaxConcurrent: 2, QueryLogRetentionDays: 30}, DatasetQueryContext{
+		ActorID:   7,
+		ProjectID: dataset.ProjectID,
+		Source:    DatasetQuerySourceEditor,
+	}, dataset.ID, DatasetQueryRequest{
 		Dimensions: []string{"region"},
 		Metrics:    []QueryMetric{{Field: "revenue", Aggregation: "sum", Alias: "revenue"}},
 		Limit:      100,
@@ -112,6 +144,43 @@ func TestExecuteDatasetQueryWritesAuditLog(t *testing.T) {
 	log := waitForDatasetQueryLog(t, db)
 	if log.Status != "success" || log.DatasetID != dataset.ID || log.RowCount != 2 || log.QueryHash == "" {
 		t.Fatalf("unexpected query log: %#v", log)
+	}
+	if !strings.Contains(string(log.RequestSummary), `"source":"editor"`) || !strings.Contains(string(log.RequestSummary), `"projectId":1`) {
+		t.Fatalf("expected query context in request summary, got %s", string(log.RequestSummary))
+	}
+}
+
+func TestExecuteDatasetQueryRejectsProjectScopeMismatch(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "query-scope.db")), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Dataset{}, &models.DatasetQueryLog{}, &models.DatasetQueryCache{}); err != nil {
+		t.Fatalf("migrate sqlite: %v", err)
+	}
+	dataset := models.Dataset{
+		WorkspaceID:  1,
+		ProjectID:    2,
+		OwnerID:      1,
+		Name:         "隔离数据集",
+		Type:         models.DatasetTypeStandard,
+		SourceName:   "Mock",
+		QueryTimeout: 10,
+		RowLimit:     500,
+		Dimensions:   datatypes.JSON([]byte(`[{"name":"region","label":"区域","type":"string"}]`)),
+		Measures:     datatypes.JSON([]byte(`[{"name":"revenue","label":"收入","type":"number"}]`)),
+		Rows:         datatypes.JSON([]byte(`[{"region":"华东","revenue":120}]`)),
+	}
+	if err := db.Create(&dataset).Error; err != nil {
+		t.Fatalf("create dataset: %v", err)
+	}
+
+	_, err = ExecuteDatasetQuery(context.Background(), db, config.Config{QueryMaxConcurrent: 2}, DatasetQueryContext{
+		ProjectID: 1,
+		Source:    DatasetQuerySourcePublished,
+	}, dataset.ID, DatasetQueryRequest{Limit: 100})
+	if err == nil || !strings.Contains(err.Error(), "outside project scope") {
+		t.Fatalf("expected project scope mismatch, got %v", err)
 	}
 }
 

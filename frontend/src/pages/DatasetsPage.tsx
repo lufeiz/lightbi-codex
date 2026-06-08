@@ -1,12 +1,13 @@
 import { DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Typography } from 'antd';
+import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { api } from '@/api/client';
 import { useAuthStore } from '@/store/authStore';
-import { useWorkspaceStore } from '@/store/workspaceStore';
-import type { DataRow, DataSourceSummary, DatasetField, DatasetMutationPayload, DatasetSummary } from '@/types/domain';
+import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
+import type { DataRow, DataSourceSummary, DatasetField, DatasetMutationPayload, DatasetQueryColumn, DatasetSummary } from '@/types/domain';
 import { datasetTypeLabels } from '@/types/domain';
 
 interface DatasetFormValues extends Omit<DatasetMutationPayload, 'dimensions' | 'measures'> {
@@ -15,6 +16,7 @@ interface DatasetFormValues extends Omit<DatasetMutationPayload, 'dimensions' | 
 }
 
 export function DatasetsPage() {
+  const navigate = useNavigate();
   const [form] = Form.useForm<DatasetFormValues>();
   const [items, setItems] = useState<DatasetSummary[]>([]);
   const [sources, setSources] = useState<DataSourceSummary[]>([]);
@@ -23,11 +25,24 @@ export function DatasetsPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<DatasetSummary | null>(null);
   const [previewRows, setPreviewRows] = useState<DataRow[]>([]);
+  const [previewing, setPreviewing] = useState(false);
+  const [detectingFields, setDetectingFields] = useState(false);
   const user = useAuthStore((state) => state.user);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
-  const canWrite = user?.role === 'admin' || user?.role === 'editor';
+  const projectRole = useWorkspaceStore((state) => state.projectRole);
+  const canWrite = hasProjectWriteAccess(user, projectRole);
+  const createDisabledReason = !projectId ? '请先创建或选择项目' : !canWrite ? '当前项目无写权限' : '';
   const sourceOptions = useMemo(() => sources.map((source) => ({ value: source.id, label: `${source.name} · ${source.type}` })), [sources]);
+  const dimensionsText = Form.useWatch('dimensionsText', form) ?? '';
+  const measuresText = Form.useWatch('measuresText', form) ?? '';
+  const parsedFieldRows = useMemo(
+    () => [
+      ...parseFields(dimensionsText).map((field) => ({ ...field, role: '维度' })),
+      ...parseFields(measuresText).map((field) => ({ ...field, role: '指标' }))
+    ],
+    [dimensionsText, measuresText]
+  );
 
   const fetchItems = useCallback(async () => {
     setLoading(true);
@@ -73,8 +88,8 @@ export function DatasetsPage() {
         description: '',
         sourceName: '',
         querySql: 'SELECT * FROM table_name',
-        dimensionsText: 'region,区域,string',
-        measuresText: 'revenue,收入,number',
+        dimensionsText: '',
+        measuresText: '',
         cacheTtl: 300,
         refreshEvery: 0,
         queryTimeout: 10,
@@ -84,8 +99,22 @@ export function DatasetsPage() {
     setModalOpen(true);
   };
 
-  const buildPayload = async (): Promise<DatasetMutationPayload> => {
-    const values = await form.validateFields();
+  const buildPayload = async (requireFields = true): Promise<DatasetMutationPayload> => {
+    if (requireFields) {
+      await form.validateFields();
+    } else {
+      await form.validateFields(['name', 'type', 'dataSourceId', 'sourceName', 'querySql', 'cacheTtl', 'refreshEvery', 'queryTimeout', 'rowLimit', 'description']);
+    }
+    const values = form.getFieldsValue();
+    const dimensions = parseFields(values.dimensionsText ?? '');
+    const measures = parseFields(values.measuresText ?? '');
+    if (requireFields && dimensions.length === 0 && measures.length === 0) {
+      form.setFields([
+        { name: 'dimensionsText', errors: ['请先测试 SQL 并确认字段'] },
+        { name: 'measuresText', errors: ['请先测试 SQL 并确认字段'] }
+      ]);
+      throw new Error('请先测试 SQL 并确认字段');
+    }
     return {
       workspaceId: workspaceId ?? undefined,
       projectId: projectId ?? undefined,
@@ -95,8 +124,8 @@ export function DatasetsPage() {
       sourceName: values.sourceName ?? '',
       dataSourceId: values.dataSourceId ?? null,
       querySql: values.querySql ?? '',
-      dimensions: parseFields(values.dimensionsText),
-      measures: parseFields(values.measuresText),
+      dimensions,
+      measures,
       cacheTtl: values.cacheTtl ?? 300,
       refreshEvery: values.refreshEvery ?? 0,
       queryTimeout: values.queryTimeout ?? 10,
@@ -105,9 +134,9 @@ export function DatasetsPage() {
   };
 
   const submit = async () => {
-    const payload = await buildPayload();
     setSaving(true);
     try {
+      const payload = await buildPayload();
       if (editing) {
         await api.updateDataset(editing.id, payload);
         message.success('数据集已更新');
@@ -124,23 +153,48 @@ export function DatasetsPage() {
     }
   };
 
-  const preview = async () => {
-    const payload = await buildPayload();
-    if (!editing) {
-      message.warning('请先保存数据集再预览');
-      return;
-    }
+  const detectFields = async () => {
+    setDetectingFields(true);
     try {
-      const result = await api.previewDataset(editing.id, {
-        dimensions: payload.dimensions.slice(0, 1).map((field) => field.name),
-        metrics: payload.measures.slice(0, 1).map((field) => ({ field: field.name, aggregation: 'sum', alias: field.name })),
-        limit: 20
-      });
+      const payload = await buildPayload(false);
+      const result = await api.previewDatasetDraft({ ...payload, dimensions: [], measures: [] }, { dimensions: [], metrics: [], limit: 20 });
+      applyInferredFields(result.columns);
+      setPreviewRows(result.rows);
+      message.success(`SQL 测试通过，已识别 ${result.columns.length} 个字段`);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : 'SQL 测试失败');
+    } finally {
+      setDetectingFields(false);
+    }
+  };
+
+  const preview = async () => {
+    setPreviewing(true);
+    try {
+      const payload = await buildPayload(false);
+      const result = editing
+        ? await api.previewDataset(editing.id, buildPreviewQuery(payload))
+        : await api.previewDatasetDraft({ ...payload, dimensions: [], measures: [] }, { dimensions: [], metrics: [], limit: 20 });
+      if (!editing && result.columns.length > 0) {
+        applyInferredFields(result.columns);
+      }
       setPreviewRows(result.rows);
       message.success('预览已更新');
     } catch (err) {
       message.error(err instanceof Error ? err.message : '预览失败');
+    } finally {
+      setPreviewing(false);
     }
+  };
+
+  const applyInferredFields = (columns: DatasetQueryColumn[]) => {
+    const fields = columns.map((column) => ({ name: column.name, label: column.label || column.name, type: normalizeDatasetFieldType(column.type), role: column.role }));
+    const dimensions = fields.filter((field) => field.role === 'dimension');
+    const measures = fields.filter((field) => field.role === 'measure');
+    form.setFieldsValue({
+      dimensionsText: fieldsToText(dimensions),
+      measuresText: fieldsToText(measures)
+    });
   };
 
   const deleteItem = (item: DatasetSummary) => {
@@ -185,9 +239,25 @@ export function DatasetsPage() {
           <Typography.Title level={3}>数据集管理</Typography.Title>
           <Typography.Text type="secondary">维护 SQL 数据集、字段元数据和查询缓存策略。</Typography.Text>
         </div>
-        <Button type="primary" icon={<PlusOutlined />} disabled={!canWrite || !projectId} onClick={() => void openModal()}>
-          新建数据集
-        </Button>
+        <Space direction="vertical" size={2} align="end">
+          <Tooltip title={createDisabledReason}>
+            <span>
+              <Button type="primary" icon={<PlusOutlined />} disabled={Boolean(createDisabledReason)} onClick={() => void openModal()}>
+                新建数据集
+              </Button>
+            </span>
+          </Tooltip>
+          {createDisabledReason && (
+            <Typography.Text type="secondary" className="asset-action-hint">
+              {createDisabledReason}
+              {!projectId && (
+                <Button type="link" size="small" onClick={() => navigate('/workspaces')}>
+                  去创建项目
+                </Button>
+              )}
+            </Typography.Text>
+          )}
+        </Space>
       </div>
       <Table rowKey="id" loading={loading} columns={columns} dataSource={items} />
 
@@ -213,13 +283,31 @@ export function DatasetsPage() {
             <Input.TextArea rows={5} />
           </Form.Item>
           <Space.Compact block>
-            <Form.Item name="dimensionsText" label="维度字段 name,label,type" rules={[{ required: true }]} className="compact-form-item">
+            <Form.Item name="dimensionsText" label="维度字段 name,label,type" className="compact-form-item">
               <Input.TextArea rows={4} />
             </Form.Item>
-            <Form.Item name="measuresText" label="指标字段 name,label,type" rules={[{ required: true }]} className="compact-form-item">
+            <Form.Item name="measuresText" label="指标字段 name,label,type" className="compact-form-item">
               <Input.TextArea rows={4} />
             </Form.Item>
           </Space.Compact>
+          {parsedFieldRows.length > 0 && (
+            <Table
+              className="dataset-field-confirm-table"
+              size="small"
+              rowKey={(row) => `${row.role}-${row.name}`}
+              dataSource={parsedFieldRows}
+              columns={[
+                { title: '角色', dataIndex: 'role', width: 80 },
+                { title: '字段名', dataIndex: 'name' },
+                { title: '显示名', dataIndex: 'label' },
+                { title: '类型', dataIndex: 'type', width: 100 }
+              ]}
+              pagination={false}
+            />
+          )}
+          {parsedFieldRows.length === 0 && (
+            <Typography.Text type="secondary">尚未识别字段</Typography.Text>
+          )}
           <Space.Compact block>
             <Form.Item name="cacheTtl" label="缓存秒" className="compact-form-item">
               <InputNumber min={0} className="full-width-control" />
@@ -237,11 +325,16 @@ export function DatasetsPage() {
           <Form.Item name="description" label="描述">
             <Input.TextArea rows={2} />
           </Form.Item>
-          {editing && (
-            <Button icon={<EyeOutlined />} onClick={() => void preview()}>
-              预览查询
+          <Space wrap>
+            {!editing && (
+              <Button icon={<ReloadOutlined />} loading={detectingFields} onClick={() => void detectFields()}>
+                测试 SQL 并识别字段
+              </Button>
+            )}
+            <Button icon={<EyeOutlined />} loading={previewing} onClick={() => void preview()}>
+              {editing ? '预览查询' : '预览前 20 行'}
             </Button>
-          )}
+          </Space>
           {previewRows.length > 0 && (
             <Table
               className="dataset-preview-table"
@@ -271,4 +364,19 @@ function parseFields(text: string): DatasetField[] {
       const [name, label, type] = line.split(',').map((part) => part.trim());
       return { name, label: label || name, type: type === 'number' || type === 'date' ? type : 'string' };
     });
+}
+
+function normalizeDatasetFieldType(type: string): DatasetField['type'] {
+  if (type === 'number' || type === 'date') {
+    return type;
+  }
+  return 'string';
+}
+
+function buildPreviewQuery(payload: DatasetMutationPayload) {
+  return {
+    dimensions: payload.dimensions.slice(0, 1).map((field) => field.name),
+    metrics: payload.measures.slice(0, 1).map((field) => ({ field: field.name, aggregation: 'sum' as const, alias: field.name })),
+    limit: 20
+  };
 }

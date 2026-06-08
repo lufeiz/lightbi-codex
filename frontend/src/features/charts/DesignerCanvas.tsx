@@ -78,9 +78,10 @@ export function DesignerCanvas() {
     selectWidget(widget.id);
     const start = { x: event.clientX, y: event.clientY, widgetX: widget.x, widgetY: widget.y };
     const interactionStart = performance.now();
+    const rafUpdater = createRafWidgetUpdater(widget.id, updateWidget);
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      updateWidget(widget.id, {
+      rafUpdater.schedule({
         x: Math.max(0, start.widgetX + moveEvent.clientX - start.x),
         y: Math.max(0, start.widgetY + moveEvent.clientY - start.y)
       });
@@ -88,6 +89,7 @@ export function DesignerCanvas() {
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
+      rafUpdater.flush();
       recordPerformanceMetric('EDITOR_INTERACTION', performance.now() - interactionStart);
     };
     window.addEventListener('pointermove', handleMove);
@@ -100,9 +102,10 @@ export function DesignerCanvas() {
     selectWidget(widget.id);
     const start = { x: event.clientX, y: event.clientY, width: widget.width, height: widget.height };
     const interactionStart = performance.now();
+    const rafUpdater = createRafWidgetUpdater(widget.id, updateWidget);
 
     const handleMove = (moveEvent: globalThis.PointerEvent) => {
-      updateWidget(widget.id, {
+      rafUpdater.schedule({
         width: Math.max(widget.type === 'text' ? TEXT_MIN_WIDTH : MIN_WIDTH, start.width + moveEvent.clientX - start.x),
         height: Math.max(widget.type === 'text' ? TEXT_MIN_HEIGHT : MIN_HEIGHT, start.height + moveEvent.clientY - start.y)
       });
@@ -110,6 +113,7 @@ export function DesignerCanvas() {
     const handleUp = () => {
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
+      rafUpdater.flush();
       recordPerformanceMetric('EDITOR_INTERACTION', performance.now() - interactionStart);
     };
     window.addEventListener('pointermove', handleMove);
@@ -143,4 +147,39 @@ function isEditableTarget(target: EventTarget | null): boolean {
   }
   const tagName = target.tagName.toLowerCase();
   return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable || Boolean(target.closest('[contenteditable="true"]'));
+}
+
+function createRafWidgetUpdater(widgetId: string, updateWidget: (id: string, patch: Partial<ChartWidget>) => void) {
+  let frame = 0;
+  let pending: Partial<ChartWidget> | null = null;
+
+  const run = () => {
+    frame = 0;
+    if (!pending) {
+      return;
+    }
+    const next = pending;
+    pending = null;
+    updateWidget(widgetId, next);
+  };
+
+  return {
+    schedule(patch: Partial<ChartWidget>) {
+      pending = patch;
+      if (!frame) {
+        frame = window.requestAnimationFrame(run);
+      }
+    },
+    flush() {
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      if (pending) {
+        const next = pending;
+        pending = null;
+        updateWidget(widgetId, next);
+      }
+    }
+  };
 }

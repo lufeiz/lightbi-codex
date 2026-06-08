@@ -98,6 +98,10 @@ func (h DataSourceHandler) Create(c *gin.Context) {
 		CreatedBy:           user.ID,
 		UpdatedBy:           user.ID,
 	}
+	if err := services.ValidateDataSourceTarget(c.Request.Context(), source, h.Config.DataSourceAllowedHosts, h.Config.DataSourceBlockPrivateNetworks); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
 	if err := h.DB.Create(&source).Error; err != nil {
 		Fail(c, http.StatusBadRequest, "create data source failed")
 		return
@@ -142,6 +146,24 @@ func (h DataSourceHandler) Update(c *gin.Context) {
 		"max_idle_conns":         defaultPositive(req.MaxIdleConns, 2),
 		"conn_max_lifetime_secs": defaultPositive(req.ConnMaxLifetimeSecs, 300),
 		"updated_by":             user.ID,
+	}
+	next := source
+	next.Name = req.Name
+	next.Type = req.Type
+	next.Status = defaultDataSourceStatus(req.Status)
+	next.Description = req.Description
+	next.Host = req.Host
+	next.Port = req.Port
+	next.DatabaseName = req.DatabaseName
+	next.Username = req.Username
+	next.SSLMode = req.SSLMode
+	next.Params = datatypes.JSON(params)
+	next.MaxOpenConns = defaultPositive(req.MaxOpenConns, 5)
+	next.MaxIdleConns = defaultPositive(req.MaxIdleConns, 2)
+	next.ConnMaxLifetimeSecs = defaultPositive(req.ConnMaxLifetimeSecs, 300)
+	if err := services.ValidateDataSourceTarget(c.Request.Context(), next, h.Config.DataSourceAllowedHosts, h.Config.DataSourceBlockPrivateNetworks); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
 	}
 	if req.Password != "" {
 		encrypted, err := services.EncryptSecret(h.Config.DataSourceKey, req.Password)
@@ -201,9 +223,9 @@ func (h DataSourceHandler) Test(c *gin.Context) {
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 8*time.Second)
 	defer cancel()
-	db, err := services.OpenDataSource(ctx, source, h.Config.DataSourceKey)
+	db, err := services.OpenDataSourceWithNetworkPolicy(ctx, source, h.Config.DataSourceKey, h.Config.DataSourceAllowedHosts, h.Config.DataSourceBlockPrivateNetworks)
 	if err != nil {
-		Fail(c, http.StatusBadRequest, err.Error())
+		Fail(c, http.StatusBadRequest, "data source connection failed")
 		return
 	}
 	services.CloseDataSource(db)
