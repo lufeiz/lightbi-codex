@@ -34,7 +34,7 @@ export function PublishedDashboardPage() {
     <main className="published-page">
       <Space className="published-page-actions">
         <Typography.Text type="secondary">版本 {data.version?.version ?? '-'}</Typography.Text>
-        <Link to={`/charts/${data.chart.id}/edit`}>
+        <Link to={`/dashboards/${data.chart.id}/edit`}>
           <Button>编辑</Button>
         </Link>
       </Space>

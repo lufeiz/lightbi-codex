@@ -261,6 +261,32 @@ func (h DatasetHandler) Rows(c *gin.Context) {
 	OK(c, rows)
 }
 
+func (h DatasetHandler) DistinctValues(c *gin.Context) {
+	var dataset models.Dataset
+	if err := h.DB.First(&dataset, c.Param("id")).Error; err != nil {
+		Fail(c, http.StatusNotFound, "dataset not found")
+		return
+	}
+	user, _ := middleware.CurrentUser(c)
+	if !canReadProject(h.DB, user, dataset.ProjectID) {
+		Fail(c, http.StatusForbidden, "dataset permission denied")
+		return
+	}
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
+	response, err := services.DistinctDatasetValues(c.Request.Context(), h.DB, h.Config, services.DatasetQueryContext{
+		ActorID:   user.ID,
+		ProjectID: dataset.ProjectID,
+		Source:    services.DatasetQuerySourceEditor,
+		IP:        c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+	}, dataset.ID, c.Query("field"), limit)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	OK(c, response)
+}
+
 func (h DatasetHandler) Preview(c *gin.Context) {
 	h.query(c, true)
 }

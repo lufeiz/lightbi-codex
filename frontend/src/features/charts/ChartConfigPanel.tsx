@@ -7,7 +7,7 @@ import {
   ReloadOutlined,
   RightOutlined
 } from '@ant-design/icons';
-import { Alert, Button, Form, Input, InputNumber, message, Select, Switch, Tabs, Tag, Tooltip, Typography } from 'antd';
+import { Alert, Button, Form, Input, InputNumber, message, Select, Switch, Tag, Tooltip, Typography } from 'antd';
 import DOMPurify from 'dompurify';
 import type { ClipboardEvent, DragEvent } from 'react';
 import { useEffect, useRef, useState } from 'react';
@@ -328,199 +328,215 @@ function SelectedChartConfigPanel({
             layout="vertical"
             onValuesChange={(_, values) => updateWidgetConfig(selectedWidget.id, values)}
           >
-            <Tabs
-              className="chart-config-tabs"
-              items={[
-                {
-                  key: 'data',
-                  label: '数据',
-                  children: (
-                    <>
-                      <Typography.Text className="selected-chart-type" type="secondary">
-                        {chartTypeLabels[selectedWidget.type]}
-                      </Typography.Text>
-                      <section className="config-section">
-                        <Typography.Text className="config-section-title">
-                          字段要求：维度 {chartDefinition.minDimensions} / 指标 {chartDefinition.minMeasures}
-                        </Typography.Text>
-                        <Form.Item label="维度">
-                          <SelectedFieldDropZone
-                            role="dimensions"
-                            fields={selectedWidget.config.dimensions ?? []}
-                            fieldLabels={selectedWidget.config.fieldLabels}
-                            onDrop={handleDrop}
-                            onRemove={(field) =>
-                              changeFields(
-                                'dimensions',
-                                (selectedWidget.config.dimensions ?? []).filter((item) => item !== field)
-                              )
-                            }
-                          />
-                        </Form.Item>
-                        <Form.Item label="指标">
-                          <SelectedFieldDropZone
-                            role="measures"
-                            fields={selectedWidget.config.measures ?? []}
-                            fieldLabels={selectedWidget.config.fieldLabels}
-                            onDrop={handleDrop}
-                            onRemove={(field) =>
-                              changeFields(
-                                'measures',
-                                (selectedWidget.config.measures ?? []).filter((item) => item !== field)
-                              )
-                            }
-                          />
-                        </Form.Item>
-                      </section>
-                      <section className="config-section">
-                        <Typography.Text className="config-section-title">查询设置</Typography.Text>
-                        {(selectedWidget.config.measures ?? []).map((field) => (
-                          <div key={field} className="query-option-row">
-                            <Typography.Text className="query-option-label">{selectedWidget.config.fieldLabels?.[field] ?? field}</Typography.Text>
-                            <Select
-                              value={metricAggregationFor(selectedWidget.config, field)}
-                              options={aggregationOptions}
-                              onChange={(value) => changeMetricAggregation(field, value as MetricAggregation)}
-                            />
-                          </div>
-                        ))}
-                        <div className="query-option-row">
-                          <Typography.Text className="query-option-label">排序字段</Typography.Text>
-                          <Select
-                            allowClear
-                            value={selectedWidget.config.query?.sorts?.[0]?.field}
-                            placeholder="不排序"
-                            options={queryFieldOptions(selectedWidget.config)}
-                            onChange={(field) => changePrimarySort({ field: field ? String(field) : '' })}
-                          />
-                        </div>
-                        <div className="query-option-row">
-                          <Typography.Text className="query-option-label">排序方向</Typography.Text>
-                          <Select
-                            value={selectedWidget.config.query?.sorts?.[0]?.order ?? 'desc'}
-                            disabled={!selectedWidget.config.query?.sorts?.[0]?.field}
-                            options={[
-                              { value: 'desc', label: '降序' },
-                            { value: 'asc', label: '升序' }
-                          ]}
-                            onChange={(order) => changePrimarySort({ order: order as QuerySort['order'] })}
-                          />
-                        </div>
-                        <div className="query-number-grid">
-                          <div>
-                            <Typography.Text className="query-option-label">TopN</Typography.Text>
-                            <InputNumber
-                              className="full-width"
-                              min={0}
-                              max={5000}
-                              value={selectedWidget.config.query?.topN ?? 0}
-                              onChange={(value) => changeQueryOptions({ topN: Number(value ?? 0) })}
-                            />
-                          </div>
-                          <div>
-                            <Typography.Text className="query-option-label">Limit</Typography.Text>
-                            <InputNumber
-                              className="full-width"
-                              min={1}
-                              max={5000}
-                              value={selectedWidget.config.query?.limit ?? 500}
-                              onChange={(value) => changeQueryOptions({ limit: Number(value ?? 500) })}
-                            />
-                          </div>
-                        </div>
-                      </section>
-                      <Button
-                        block
-                        type="primary"
-                        icon={<ReloadOutlined />}
-                        loading={updatingPreview}
-                        disabled={!canUpdatePreview}
-                        onClick={() => void updatePreviewData()}
-                      >
-                        更新图表
-                      </Button>
-                      {!canUpdatePreview && previewValidation.reasons.length > 0 && (
-                        <Alert className="inline-alert preview-query-alert" type="warning" showIcon message="图表配置不完整" description={previewValidation.reasons.join('；')} />
-                      )}
-                      {runtimeRows.length ? (
-                        <Typography.Text className="preview-data-status" type="secondary">
-                          已加载 {runtimeRows.length} 条数据
-                        </Typography.Text>
-                      ) : null}
-                      {queryError && <Alert className="inline-alert preview-query-alert" type="error" showIcon message="数据查询失败" description={queryError} />}
-                    </>
-                  )
-                },
-                {
-                  key: 'style',
-                  label: '样式',
-                  children: (
-                    <section className="config-section">
-                      <Form.Item name="title" label="图表标题" rules={[{ required: true, message: '请输入标题' }]}>
-                        <Input />
-                      </Form.Item>
-                      <Form.Item name="theme" label="主题">
-                        <Select
-                          options={[
-                            { value: 'default', label: '默认' },
-                            { value: 'business', label: '商务蓝' },
-                            { value: 'fresh', label: '清新绿' },
-                            { value: 'contrast', label: '高对比' }
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item name="labelSize" label="标签大小">
-                        <InputNumber className="full-width" min={10} max={24} step={1} addonAfter="px" />
-                      </Form.Item>
-                      <div className="config-switch-list">
-                        <div className="config-switch-item">
-                          <span>显示标签</span>
-                          <Form.Item name="showLabel" valuePropName="checked" noStyle>
-                            <Switch />
-                          </Form.Item>
-                        </div>
-                        <div className="config-switch-item">
-                          <span>显示 Tooltip</span>
-                          <Form.Item name="showTooltip" valuePropName="checked" noStyle>
-                            <Switch />
-                          </Form.Item>
-                        </div>
-                        <div className="config-switch-item">
-                          <span>显示 Scrollbar</span>
-                          <Form.Item name="showScrollbar" valuePropName="checked" noStyle>
-                            <Switch />
-                          </Form.Item>
-                        </div>
-                      </div>
-                    </section>
-                  )
-                },
-                {
-                  key: 'linkage',
-                  label: '联动',
-                  children: (
-                    <section className="config-section">
-                      <div className="config-switch-list">
-                        <div className="config-switch-item">
-                          <span>参与联动</span>
-                          <Form.Item name="enableLinkage" valuePropName="checked" noStyle>
-                            <Switch />
-                          </Form.Item>
-                        </div>
-                      </div>
-                      <Form.Item name="linkageMode" label="联动方式">
-                        <Select
-                          options={[
-                            { value: 'filter', label: '筛选联动' },
-                            { value: 'highlight', label: '高亮联动' }
-                          ]}
-                        />
-                      </Form.Item>
-                    </section>
-                  )
-                }
-              ]}
-            />
+            <div className="query-builder-flow">
+              <section className="config-section query-builder-section">
+                <div className="query-builder-section-header">
+                  <Typography.Text className="config-section-title">1 数据集</Typography.Text>
+                  <Tag color={selectedWidget.config.datasetId ? 'green' : 'default'}>
+                    {selectedWidget.config.datasetId ? '已选择' : '未选择'}
+                  </Tag>
+                </div>
+                <div className="query-builder-summary-grid">
+                  <div className="query-builder-summary-item">
+                    <span>组件类型</span>
+                    <strong>{chartTypeLabels[selectedWidget.type]}</strong>
+                  </div>
+                  <div className="query-builder-summary-item">
+                    <span>数据源类型</span>
+                    <strong>{selectedWidget.config.datasetType ? datasetTypeLabels[selectedWidget.config.datasetType] : '未选择'}</strong>
+                  </div>
+                  <div className="query-builder-summary-item query-builder-summary-item-wide">
+                    <span>数据集</span>
+                    <strong>{selectedWidget.config.datasetName ?? '请在右侧数据源配置中选择'}</strong>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section query-builder-section">
+                <div className="query-builder-section-header">
+                  <Typography.Text className="config-section-title">2 字段</Typography.Text>
+                  <Tag>
+                    维度 {chartDefinition.minDimensions} / 指标 {chartDefinition.minMeasures}
+                  </Tag>
+                </div>
+                <Form.Item label="维度">
+                  <SelectedFieldDropZone
+                    role="dimensions"
+                    fields={selectedWidget.config.dimensions ?? []}
+                    fieldLabels={selectedWidget.config.fieldLabels}
+                    onDrop={handleDrop}
+                    onRemove={(field) =>
+                      changeFields(
+                        'dimensions',
+                        (selectedWidget.config.dimensions ?? []).filter((item) => item !== field)
+                      )
+                    }
+                  />
+                </Form.Item>
+                <Form.Item label="指标">
+                  <SelectedFieldDropZone
+                    role="measures"
+                    fields={selectedWidget.config.measures ?? []}
+                    fieldLabels={selectedWidget.config.fieldLabels}
+                    onDrop={handleDrop}
+                    onRemove={(field) =>
+                      changeFields(
+                        'measures',
+                        (selectedWidget.config.measures ?? []).filter((item) => item !== field)
+                      )
+                    }
+                  />
+                </Form.Item>
+              </section>
+
+              <section className="config-section query-builder-section">
+                <Typography.Text className="config-section-title">3 聚合</Typography.Text>
+                {(selectedWidget.config.measures ?? []).length ? (
+                  (selectedWidget.config.measures ?? []).map((field) => (
+                    <div key={field} className="query-option-row">
+                      <Typography.Text className="query-option-label">{selectedWidget.config.fieldLabels?.[field] ?? field}</Typography.Text>
+                      <Select
+                        aria-label={`${selectedWidget.config.fieldLabels?.[field] ?? field} 聚合方式`}
+                        value={metricAggregationFor(selectedWidget.config, field)}
+                        options={aggregationOptions}
+                        onChange={(value) => changeMetricAggregation(field, value as MetricAggregation)}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <Typography.Text className="query-builder-muted" type="secondary">
+                    选择指标字段后可配置聚合方式。明细表等无指标组件会跳过聚合。
+                  </Typography.Text>
+                )}
+              </section>
+
+              <section className="config-section query-builder-section">
+                <Typography.Text className="config-section-title">4 过滤排序 TopN</Typography.Text>
+                <div className="query-option-row">
+                  <Typography.Text className="query-option-label">排序字段</Typography.Text>
+                  <Select
+                    allowClear
+                    value={selectedWidget.config.query?.sorts?.[0]?.field}
+                    placeholder="不排序"
+                    options={queryFieldOptions(selectedWidget.config)}
+                    onChange={(field) => changePrimarySort({ field: field ? String(field) : '' })}
+                  />
+                </div>
+                <div className="query-option-row">
+                  <Typography.Text className="query-option-label">排序方向</Typography.Text>
+                  <Select
+                    value={selectedWidget.config.query?.sorts?.[0]?.order ?? 'desc'}
+                    disabled={!selectedWidget.config.query?.sorts?.[0]?.field}
+                    options={[
+                      { value: 'desc', label: '降序' },
+                      { value: 'asc', label: '升序' }
+                    ]}
+                    onChange={(order) => changePrimarySort({ order: order as QuerySort['order'] })}
+                  />
+                </div>
+                <div className="query-number-grid">
+                  <div>
+                    <Typography.Text className="query-option-label">TopN</Typography.Text>
+                    <InputNumber
+                      className="full-width"
+                      min={0}
+                      max={5000}
+                      value={selectedWidget.config.query?.topN ?? 0}
+                      onChange={(value) => changeQueryOptions({ topN: Number(value ?? 0) })}
+                    />
+                  </div>
+                  <div>
+                    <Typography.Text className="query-option-label">Limit</Typography.Text>
+                    <InputNumber
+                      className="full-width"
+                      min={1}
+                      max={5000}
+                      value={selectedWidget.config.query?.limit ?? 500}
+                      onChange={(value) => changeQueryOptions({ limit: Number(value ?? 500) })}
+                    />
+                  </div>
+                </div>
+                <Button
+                  block
+                  type="primary"
+                  icon={<ReloadOutlined />}
+                  loading={updatingPreview}
+                  disabled={!canUpdatePreview}
+                  onClick={() => void updatePreviewData()}
+                >
+                  更新图表
+                </Button>
+                {!canUpdatePreview && previewValidation.reasons.length > 0 && (
+                  <Alert className="inline-alert preview-query-alert" type="warning" showIcon message="图表配置不完整" description={previewValidation.reasons.join('；')} />
+                )}
+                {runtimeRows.length ? (
+                  <Typography.Text className="preview-data-status" type="secondary">
+                    已加载 {runtimeRows.length} 条数据
+                  </Typography.Text>
+                ) : null}
+                {queryError && <Alert className="inline-alert preview-query-alert" type="error" showIcon message="数据查询失败" description={queryError} />}
+              </section>
+
+              <section className="config-section query-builder-section">
+                <Typography.Text className="config-section-title">5 样式</Typography.Text>
+                <Form.Item name="title" label="图表标题" rules={[{ required: true, message: '请输入标题' }]}>
+                  <Input />
+                </Form.Item>
+                <Form.Item name="theme" label="主题">
+                  <Select
+                    options={[
+                      { value: 'default', label: '默认' },
+                      { value: 'business', label: '商务蓝' },
+                      { value: 'fresh', label: '清新绿' },
+                      { value: 'contrast', label: '高对比' }
+                    ]}
+                  />
+                </Form.Item>
+                <Form.Item name="labelSize" label="标签大小">
+                  <InputNumber className="full-width" min={10} max={24} step={1} addonAfter="px" />
+                </Form.Item>
+                <div className="config-switch-list">
+                  <div className="config-switch-item">
+                    <span>显示标签</span>
+                    <Form.Item name="showLabel" valuePropName="checked" noStyle>
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                  <div className="config-switch-item">
+                    <span>显示 Tooltip</span>
+                    <Form.Item name="showTooltip" valuePropName="checked" noStyle>
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                  <div className="config-switch-item">
+                    <span>显示 Scrollbar</span>
+                    <Form.Item name="showScrollbar" valuePropName="checked" noStyle>
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                </div>
+              </section>
+
+              <section className="config-section query-builder-section">
+                <Typography.Text className="config-section-title">联动设置</Typography.Text>
+                <div className="config-switch-list">
+                  <div className="config-switch-item">
+                    <span>参与联动</span>
+                    <Form.Item name="enableLinkage" valuePropName="checked" noStyle>
+                      <Switch />
+                    </Form.Item>
+                  </div>
+                </div>
+                <Form.Item name="linkageMode" label="联动方式">
+                  <Select
+                    options={[
+                      { value: 'filter', label: '筛选联动' },
+                      { value: 'highlight', label: '高亮联动' }
+                    ]}
+                  />
+                </Form.Item>
+              </section>
+            </div>
           </Form>
         </div>
       )}

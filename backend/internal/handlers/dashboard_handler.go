@@ -268,7 +268,7 @@ func (h DashboardHandler) ListShareLinks(c *gin.Context) {
 	}
 	out := make([]dashboardShareLinkDTO, 0, len(links))
 	for _, link := range links {
-		out = append(out, toShareLinkDTO(link, ""))
+		out = append(out, toShareLinkDTO(link, link.Token))
 	}
 	OK(c, out)
 }
@@ -305,6 +305,7 @@ func (h DashboardHandler) CreateShareLink(c *gin.Context) {
 		WorkspaceID: chart.WorkspaceID,
 		ProjectID:   chart.ProjectID,
 		Name:        req.Name,
+		Token:       token,
 		TokenHash:   hashToken(token),
 		TokenPrefix: tokenPrefix(token),
 		Enabled:     enabled,
@@ -605,7 +606,7 @@ func (h DashboardHandler) exportChart(c *gin.Context, chart models.Chart, req ex
 	for _, row := range rows {
 		record := make([]string, 0, len(columns))
 		for _, column := range columns {
-			record = append(record, fmt.Sprint(row[column]))
+			record = append(record, sanitizeCSVCell(fmt.Sprint(row[column])))
 		}
 		_ = writer.Write(record)
 	}
@@ -617,6 +618,18 @@ func (h DashboardHandler) exportChart(c *gin.Context, chart models.Chart, req ex
 		Content:  builder.String(),
 		RowCount: len(rows),
 	}, nil
+}
+
+func sanitizeCSVCell(value string) string {
+	if value == "" {
+		return value
+	}
+	switch value[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func (h DashboardHandler) rowsForExport(c *gin.Context, chart models.Chart, widgetID string) ([]map[string]any, []string, error) {

@@ -19,6 +19,8 @@ interface DesignerState {
   runtimeRows: Record<string, DataRow[]>;
   filters: DashboardFilters;
   selectedWidgetId: string | null;
+  historyPast: DesignerSnapshot[];
+  historyFuture: DesignerSnapshot[];
   reset: () => void;
   load: (payload: Partial<DesignerMeta> & { config?: ChartDocument; type?: ChartType }) => void;
   setMeta: (meta: Partial<DesignerMeta>) => void;
@@ -26,12 +28,22 @@ interface DesignerState {
   resetFilters: () => void;
   addWidget: (type: ChartType) => void;
   deleteWidget: (id: string) => void;
+  duplicateSelectedWidget: () => void;
+  alignSelectedWidget: (mode: 'left' | 'top') => void;
+  undo: () => void;
+  redo: () => void;
   selectWidget: (id: string | null) => void;
   syncPrimaryTitle: (title: string) => void;
   updateWidget: (id: string, patch: Partial<ChartWidget>) => void;
   updateWidgetConfig: (id: string, patch: Partial<ChartWidget['config']>) => void;
   setWidgetRows: (id: string, rows: DataRow[]) => void;
   toPayload: () => ChartMutationPayload;
+}
+
+interface DesignerSnapshot {
+  widgets: ChartWidget[];
+  filters: DashboardFilters;
+  selectedWidgetId: string | null;
 }
 
 const defaultMeta: DesignerMeta = {
@@ -51,14 +63,18 @@ const createDefaultFilters = (): DashboardFilters => ({
   dimensionControls: []
 });
 
+const maxHistoryEntries = 50;
+
 export const useDesignerStore = create<DesignerState>((set, get) => ({
   meta: defaultMeta,
   widgets: [],
   runtimeRows: {},
   filters: createDefaultFilters(),
   selectedWidgetId: null,
+  historyPast: [],
+  historyFuture: [],
   reset() {
-    set({ meta: defaultMeta, widgets: [], runtimeRows: {}, filters: createDefaultFilters(), selectedWidgetId: null });
+    set({ meta: defaultMeta, widgets: [], runtimeRows: {}, filters: createDefaultFilters(), selectedWidgetId: null, historyPast: [], historyFuture: [] });
   },
   load(payload) {
     const widgets = payload.config?.widgets?.length ? payload.config.widgets : [];
@@ -75,7 +91,9 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       widgets,
       runtimeRows: Object.fromEntries(widgets.map((widget) => [widget.id, widget.config.previewRows ?? []])),
       filters: normalizeFilters(payload.config?.filters, widgets),
-      selectedWidgetId: widgets[0]?.id ?? null
+      selectedWidgetId: widgets[0]?.id ?? null,
+      historyPast: [],
+      historyFuture: []
     });
   },
   setMeta(meta) {
@@ -94,6 +112,7 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
     widget.x = position.x;
     widget.y = position.y;
     set((state) => ({
+      ...pushHistory(state),
       widgets: [...state.widgets, widget],
       selectedWidgetId: widget.id
     }));
@@ -107,9 +126,83 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
       const widgets = state.widgets.filter((widget) => widget.id !== id);
       const nextSelectedWidget = widgets[targetIndex] ?? widgets[targetIndex - 1] ?? widgets[0] ?? null;
       return {
+        ...pushHistory(state),
         widgets,
         selectedWidgetId: state.selectedWidgetId === id ? (nextSelectedWidget?.id ?? null) : state.selectedWidgetId,
         filters: removeWidgetFromFilters(state.filters, id)
+      };
+    });
+  },
+  duplicateSelectedWidget() {
+    set((state) => {
+      const source = state.widgets.find((widget) => widget.id === state.selectedWidgetId);
+      if (!source) {
+        return state;
+      }
+      const widget = cloneValue(source);
+      widget.id = safeId();
+      widget.x = source.x + 32;
+      widget.y = source.y + 32;
+      widget.config = {
+        ...widget.config,
+        title: `${source.config.title || chartTypeLabels[source.type]} 副本`
+      };
+      const position = findOpenPosition(widget, state.widgets);
+      widget.x = position.x;
+      widget.y = position.y;
+      return {
+        ...pushHistory(state),
+        widgets: [...state.widgets, widget],
+        selectedWidgetId: widget.id
+      };
+    });
+  },
+  alignSelectedWidget(mode) {
+    set((state) => {
+      const target = state.widgets.find((widget) => widget.id === state.selectedWidgetId);
+      if (!target || state.widgets.length < 2) {
+        return state;
+      }
+      const value = mode === 'left'
+        ? Math.min(...state.widgets.map((widget) => widget.x))
+        : Math.min(...state.widgets.map((widget) => widget.y));
+      return {
+        ...pushHistory(state),
+        widgets: state.widgets.map((widget) =>
+          widget.id === target.id ? { ...widget, [mode === 'left' ? 'x' : 'y']: value } : widget
+        )
+      };
+    });
+  },
+  undo() {
+    set((state) => {
+      const previous = state.historyPast.at(-1);
+      if (!previous) {
+        return state;
+      }
+      const current = snapshotDesignerState(state);
+      return {
+        widgets: cloneValue(previous.widgets),
+        filters: cloneValue(previous.filters),
+        selectedWidgetId: previous.selectedWidgetId,
+        historyPast: state.historyPast.slice(0, -1),
+        historyFuture: [current, ...state.historyFuture].slice(0, maxHistoryEntries)
+      };
+    });
+  },
+  redo() {
+    set((state) => {
+      const next = state.historyFuture[0];
+      if (!next) {
+        return state;
+      }
+      const current = snapshotDesignerState(state);
+      return {
+        widgets: cloneValue(next.widgets),
+        filters: cloneValue(next.filters),
+        selectedWidgetId: next.selectedWidgetId,
+        historyPast: [...state.historyPast, current].slice(-maxHistoryEntries),
+        historyFuture: state.historyFuture.slice(1)
       };
     });
   },
@@ -172,6 +265,25 @@ export const useDesignerStore = create<DesignerState>((set, get) => ({
     };
   }
 }));
+
+function pushHistory(state: DesignerState): Pick<DesignerState, 'historyPast' | 'historyFuture'> {
+  return {
+    historyPast: [...state.historyPast, snapshotDesignerState(state)].slice(-maxHistoryEntries),
+    historyFuture: []
+  };
+}
+
+function snapshotDesignerState(state: DesignerState): DesignerSnapshot {
+  return {
+    widgets: cloneValue(state.widgets),
+    filters: cloneValue(state.filters),
+    selectedWidgetId: state.selectedWidgetId
+  };
+}
+
+function cloneValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
 
 function createWidget(type: ChartType, x: number, y: number): ChartWidget {
   const definition = getChartDefinition(type);

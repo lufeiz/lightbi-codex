@@ -38,16 +38,19 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	tagHandler := handlers.TagHandler{DB: db}
 	dataSourceHandler := handlers.DataSourceHandler{DB: db, Config: cfg}
 	datasetHandler := handlers.DatasetHandler{DB: db, Config: cfg}
+	loginRateLimit := middleware.RateLimit("auth-login", 20, time.Minute, middleware.RateLimitIPKey)
+	publicShareRateLimit := middleware.RateLimit("public-share", 120, time.Minute, middleware.RateLimitIPKey)
+	exportRateLimit := middleware.RateLimit("chart-export", 30, time.Minute, middleware.RateLimitUserOrIPKey)
 
 	api := engine.Group("/api")
 	api.GET("/health", func(c *gin.Context) {
 		handlers.OK(c, gin.H{"status": "ok"})
 	})
-	api.POST("/auth/login", authHandler.Login)
+	api.POST("/auth/login", loginRateLimit, authHandler.Login)
 	api.POST("/auth/register", authHandler.Register)
 	api.POST("/auth/refresh", authHandler.Refresh)
-	api.GET("/public/shares/:token", dashboardHandler.PublicShare)
-	api.GET("/public/embeds/:token", dashboardHandler.PublicEmbed)
+	api.GET("/public/shares/:token", publicShareRateLimit, dashboardHandler.PublicShare)
+	api.GET("/public/embeds/:token", publicShareRateLimit, dashboardHandler.PublicEmbed)
 
 	protected := api.Group("/")
 	protected.Use(middleware.AuthRequired(db, jwtService))
@@ -94,7 +97,7 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	protected.POST("/charts/:id/share-links", writeRoles, dashboardHandler.CreateShareLink)
 	protected.PUT("/charts/:id/share-links/:linkId", writeRoles, dashboardHandler.UpdateShareLink)
 	protected.DELETE("/charts/:id/share-links/:linkId", writeRoles, dashboardHandler.DeleteShareLink)
-	protected.POST("/charts/:id/export", readRoles, dashboardHandler.Export)
+	protected.POST("/charts/:id/export", exportRateLimit, readRoles, dashboardHandler.Export)
 	protected.GET("/charts/:id/subscriptions", readRoles, dashboardHandler.ListSubscriptions)
 	protected.POST("/charts/:id/subscriptions", writeRoles, dashboardHandler.CreateSubscription)
 	protected.PUT("/charts/:id/subscriptions/:subscriptionId", writeRoles, dashboardHandler.UpdateSubscription)
@@ -120,6 +123,7 @@ func Setup(cfg config.Config, db *gorm.DB) *gin.Engine {
 	protected.GET("/datasets", readRoles, datasetHandler.List)
 	protected.POST("/datasets", writeRoles, datasetHandler.Create)
 	protected.POST("/datasets/preview", writeRoles, datasetHandler.PreviewDraft)
+	protected.GET("/datasets/:id/distinct-values", readRoles, datasetHandler.DistinctValues)
 	protected.GET("/datasets/:id", readRoles, datasetHandler.Get)
 	protected.PUT("/datasets/:id", writeRoles, datasetHandler.Update)
 	protected.DELETE("/datasets/:id", writeRoles, datasetHandler.Delete)

@@ -47,7 +47,7 @@ import {
 import { useAuthStore } from '@/store/authStore';
 import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
 import type { ChartAsset, ChartGroup, ChartQuery, ChartTag, UserDTO } from '@/types/domain';
-import { chartStatusLabels, chartTypeLabels } from '@/types/domain';
+import { chartStatusLabels } from '@/types/domain';
 
 const { RangePicker } = DatePicker;
 
@@ -271,16 +271,23 @@ export function ChartsPage() {
       dataIndex: 'name',
       render: (value: string, record) => (
         <Space direction="vertical" size={2}>
-          <Link to={`/charts/${record.id}/edit`}>{value}</Link>
+          <Link to={`/dashboards/${record.id}/edit`}>{value}</Link>
           <Typography.Text type="secondary">{record.description || '暂无描述'}</Typography.Text>
         </Space>
       )
     },
     {
-      title: '首图类型',
-      dataIndex: 'type',
-      width: 120,
-      render: (value: ChartAsset['type']) => chartTypeLabels[value]
+      title: '组件数',
+      width: 100,
+      render: (_: unknown, record) => dashboardWidgetCount(record)
+    },
+    {
+      title: '数据健康',
+      width: 140,
+      render: (_: unknown, record) => {
+        const health = dashboardDataHealth(record);
+        return <Tag color={health.color}>{health.label}</Tag>;
+      }
     },
     {
       title: '目录',
@@ -332,7 +339,7 @@ export function ChartsPage() {
       width: 112,
       render: (_, record) => (
         <Space>
-          <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/charts/${record.id}/edit`)}>
+          <Button size="small" icon={<EditOutlined />} onClick={() => navigate(`/dashboards/${record.id}/edit`)}>
             编辑
           </Button>
           {record.status === 'published' && (
@@ -414,7 +421,7 @@ export function ChartsPage() {
               <Input.Search allowClear placeholder="搜索名称/描述" onSearch={() => filterForm.submit()} />
             </Form.Item>
             <Form.Item name="type">
-              <Select allowClear placeholder="首图类型" options={chartTypeOptions} className="filter-control" />
+              <Select allowClear placeholder="组件类型" options={chartTypeOptions} className="filter-control" />
             </Form.Item>
             <Form.Item name="status">
               <Select allowClear placeholder="状态" options={chartStatusOptions} className="filter-control" />
@@ -475,7 +482,7 @@ export function ChartsPage() {
             <Space direction="vertical" size={2} align="end">
               <Tooltip title={createDisabledReason}>
                 <span>
-                  <Button type="primary" icon={<PlusOutlined />} disabled={Boolean(createDisabledReason)} onClick={() => navigate('/charts/new')}>
+                  <Button type="primary" icon={<PlusOutlined />} disabled={Boolean(createDisabledReason)} onClick={() => navigate('/dashboards/new')}>
                     创建仪表盘
                   </Button>
                 </span>
@@ -525,7 +532,7 @@ export function ChartsPage() {
                 <Card
                   className="chart-card"
                   title={chart.name}
-                  extra={<Link to={`/charts/${chart.id}/edit`}>编辑</Link>}
+                  extra={<Link to={`/dashboards/${chart.id}/edit`}>编辑</Link>}
                   actions={[
                     <FileAddOutlined key="copy" onClick={() => canWrite && void runChartAction('copy', chart)} />,
                     <DeleteOutlined key="delete" onClick={() => canWrite && void runChartAction('delete', chart)} />
@@ -534,7 +541,8 @@ export function ChartsPage() {
                   <Space direction="vertical" size={8}>
                     <Typography.Text type="secondary">{chart.description || '暂无描述'}</Typography.Text>
                     <Space wrap>
-                      <Tag color="blue">{chartTypeLabels[chart.type]}</Tag>
+                      <Tag color="blue">{dashboardWidgetCount(chart)} 个组件</Tag>
+                      <Tag color={dashboardDataHealth(chart).color}>{dashboardDataHealth(chart).label}</Tag>
                       <Tag>{chartStatusLabels[chart.status]}</Tag>
                       <Tag>{chart.group?.name ?? '未分组'}</Tag>
                     </Space>
@@ -616,4 +624,24 @@ function toTreeNode(group: ReturnType<typeof buildGroupTree>[number]): GroupTree
     title: group.name,
     children: group.children.map(toTreeNode)
   };
+}
+
+function dashboardWidgetCount(chart: ChartAsset): number {
+  return chart.config.widgets?.length ?? 0;
+}
+
+function dashboardDataHealth(chart: ChartAsset): { label: string; color: string } {
+  const widgets = chart.config.widgets ?? [];
+  const dataWidgets = widgets.filter((widget) => widget.type !== 'text' && widget.type !== 'richText');
+  if (dataWidgets.length === 0) {
+    return { label: '无需数据', color: 'default' };
+  }
+  const configured = dataWidgets.filter((widget) => Boolean(widget.config.datasetId)).length;
+  if (configured === dataWidgets.length) {
+    return { label: '已配置', color: 'green' };
+  }
+  if (configured === 0) {
+    return { label: '未配置', color: 'red' };
+  }
+  return { label: `${configured}/${dataWidgets.length} 已配置`, color: 'gold' };
 }

@@ -1,0 +1,63 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-lightbi}
+      MYSQL_USER: ${MYSQL_USER:-lightbi}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me-lightbi-password}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-root-password}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u$${MYSQL_USER} -p$${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_ADDR: :8080
+      MYSQL_DSN: ${MYSQL_DSN:-lightbi:change-me-lightbi-password@tcp(mysql:3306)/lightbi?charset=utf8mb4&parseTime=True&loc=Local}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      JWT_ACCESS_TTL_MINUTES: ${JWT_ACCESS_TTL_MINUTES:-30}
+      JWT_REFRESH_TTL_HOURS: ${JWT_REFRESH_TTL_HOURS:-168}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:?set SEED_ADMIN_PASSWORD}
+      RUN_AUTO_MIGRATE: ${RUN_AUTO_MIGRATE:-false}
+      RUN_SEED_DEFAULTS: ${RUN_SEED_DEFAULTS:-false}
+      REGISTER_MODE: ${REGISTER_MODE:-disabled}
+      REGISTER_CODE: ${REGISTER_CODE:-}
+      DATA_SOURCE_CREDENTIAL_KEY: ${DATA_SOURCE_CREDENTIAL_KEY:?set DATA_SOURCE_CREDENTIAL_KEY}
+      DATA_SOURCE_ALLOWED_HOSTS: ${DATA_SOURCE_ALLOWED_HOSTS:-}
+      DATA_SOURCE_BLOCK_PRIVATE_NETWORKS: ${DATA_SOURCE_BLOCK_PRIVATE_NETWORKS:-true}
+      DATASET_QUERY_SCHEDULER: ${DATASET_QUERY_SCHEDULER:-false}
+      DATASET_QUERY_MAX_CONCURRENT: ${DATASET_QUERY_MAX_CONCURRENT:-8}
+      DATASET_QUERY_LOG_RETENTION_DAYS: ${DATASET_QUERY_LOG_RETENTION_DAYS:-30}
+    ports:
+      - "8080:8080"
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        API_BASE_URL: /api
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  mysql-data:

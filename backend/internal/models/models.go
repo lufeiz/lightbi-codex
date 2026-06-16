@@ -263,6 +263,7 @@ type DashboardShareLink struct {
 	WorkspaceID uint           `gorm:"not null;default:0;index" json:"workspaceId"`
 	ProjectID   uint           `gorm:"not null;default:0;index" json:"projectId"`
 	Name        string         `gorm:"size:160;not null" json:"name"`
+	Token       string         `gorm:"size:128" json:"-"`
 	TokenHash   string         `gorm:"size:128;not null;uniqueIndex" json:"-"`
 	TokenPrefix string         `gorm:"size:16;not null;index" json:"tokenPrefix"`
 	Enabled     bool           `gorm:"not null;default:true" json:"enabled"`

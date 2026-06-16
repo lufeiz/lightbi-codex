@@ -4,6 +4,7 @@ import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { useEffect, useMemo, useState } from 'react';
 
+import { api } from '@/api/client';
 import { useDesignerStore } from '@/store/designerStore';
 import type { ChartWidget, DashboardDimensionFilter, DashboardFilters } from '@/types/domain';
 
@@ -23,6 +24,12 @@ interface DimensionDraft {
 interface WidgetDimension {
   field: string;
   label: string;
+}
+
+interface DistinctTarget {
+  controlId: string;
+  datasetId: number;
+  field: string;
 }
 
 const defaultFieldLabels: Record<string, string> = {
@@ -58,9 +65,12 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
   const allowConfigure = props.allowConfigure ?? true;
   const chartOptions = useMemo(() => buildChartOptions(widgets), [widgets]);
   const normalizedControls = useMemo(
-    () => normalizeDimensionControls(filters.dimensionControls, widgets, runtimeRows),
-    [filters.dimensionControls, runtimeRows, widgets]
+    () => normalizeDimensionControls(filters.dimensionControls, widgets),
+    [filters.dimensionControls, widgets]
   );
+  const distinctTargets = useMemo(() => buildDistinctTargets(normalizedControls, widgets), [normalizedControls, widgets]);
+  const distinctTargetKey = useMemo(() => JSON.stringify(distinctTargets), [distinctTargets]);
+  const [distinctOptionsByControl, setDistinctOptionsByControl] = useState<Record<string, ChartOption[]>>({});
   const [dimensionDraft, setDimensionDraft] = useState<DimensionDraft | null>(null);
   const timeEnabled = Boolean(filters.timeFilter.enabled || filters.timeFilter.range);
   const timeRangeValue: [Dayjs, Dayjs] | null = filters.timeFilter.range
@@ -84,6 +94,33 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
       });
     }
   }, [filters.dimensionControls, filters.timeFilter, normalizedControls, setFilters]);
+
+  useEffect(() => {
+    const targets = JSON.parse(distinctTargetKey) as DistinctTarget[];
+    if (!targets.length) {
+      setDistinctOptionsByControl({});
+      return undefined;
+    }
+    let active = true;
+    void Promise.all(
+      targets.map((target) =>
+        api
+          .datasetDistinctValues(target.datasetId, target.field, 200)
+          .then((response) => [
+            target.controlId,
+            response.values.map((value) => ({ value: String(value), label: String(value) }))
+          ] as const)
+          .catch(() => [target.controlId, []] as const)
+      )
+    ).then((entries) => {
+      if (active) {
+        setDistinctOptionsByControl(Object.fromEntries(entries));
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [distinctTargetKey]);
 
   const updateTimeFilter = (patch: Partial<DashboardFilters['timeFilter']>) => {
     setFilters({
@@ -115,7 +152,7 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
   const updateDimensionValues = (id: string, values: string[]) => {
     setFilters({
       dimensionControls: normalizedControls.map((control) =>
-        control.id === id ? normalizeDimensionControl({ ...control, values }, widgets, runtimeRows) : control
+        control.id === id ? normalizeDimensionControl({ ...control, values }, widgets) : control
       )
     });
   };
@@ -139,8 +176,7 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
         fieldsByChart: existingControl?.fieldsByChart ?? {},
         values: existingControl?.values ?? []
       },
-      widgets,
-      runtimeRows
+      widgets
     );
     const nextControls = existingControl
       ? normalizedControls.map((control) => (control.id === existingControl.id ? nextControl : control))
@@ -210,7 +246,7 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
             </div>
             <div className="dimension-control-list">
               {normalizedControls.map((control) => {
-                const valueOptions = buildDimensionValueOptions(widgets, runtimeRows, control);
+                const valueOptions = distinctOptionsByControl[control.id] ?? buildDimensionValueOptions(widgets, runtimeRows, control);
                 return (
                   <div key={control.id} className="dimension-control-row">
                     <Input
@@ -246,6 +282,9 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
                       type="text"
                       onClick={() => deleteDimensionControl(control.id)}
                     />
+                    <Typography.Text className="filter-impact-scope" type="secondary">
+                      影响 {control.chartIds?.length ?? 0} 个组件
+                    </Typography.Text>
                   </div>
                 );
               })}
@@ -292,17 +331,15 @@ export function DashboardFilterBar(props: DashboardFilterBarProps = {}) {
   );
 }
 
-function normalizeDimensionControls(controls: DashboardDimensionFilter[], widgets: ChartWidget[], runtimeRows: Record<string, unknown[]>): DashboardDimensionFilter[] {
-  return controls.map((control) => normalizeDimensionControl(control, widgets, runtimeRows));
+function normalizeDimensionControls(controls: DashboardDimensionFilter[], widgets: ChartWidget[]): DashboardDimensionFilter[] {
+  return controls.map((control) => normalizeDimensionControl(control, widgets));
 }
 
-function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: ChartWidget[], runtimeRows: Record<string, unknown[]>): DashboardDimensionFilter {
+function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: ChartWidget[]): DashboardDimensionFilter {
   const label = control.label || '维度';
   const chartIds = normalizeChartIds(control, widgets);
   const fieldsByChart = buildFieldsByChart(widgets, label, chartIds, control.fieldsByChart, control.field);
   const field = Object.values(fieldsByChart)[0] ?? control.field ?? '';
-  const valueOptions = buildDimensionValueOptions(widgets, runtimeRows, { ...control, label, chartIds, field, fieldsByChart, values: [] });
-  const validValues = new Set(valueOptions.map((option) => option.value));
 
   return {
     id: control.id || createFilterId(),
@@ -310,7 +347,7 @@ function normalizeDimensionControl(control: DashboardDimensionFilter, widgets: C
     chartIds,
     field,
     fieldsByChart,
-    values: control.values.filter((value) => validValues.has(value))
+    values: [...new Set(control.values.map(String).filter(Boolean))]
   };
 }
 
@@ -367,6 +404,21 @@ function buildDimensionValueOptions(widgets: ChartWidget[], runtimeRows: Record<
     }));
 }
 
+function buildDistinctTargets(controls: DashboardDimensionFilter[], widgets: ChartWidget[]): DistinctTarget[] {
+  return controls.flatMap((control) => {
+    const targetChartIds = control.chartIds?.length ? control.chartIds : [];
+    for (const chartId of targetChartIds) {
+      const widget = widgets.find((item) => item.id === chartId);
+      const datasetId = widget?.config.datasetId;
+      const field = control.fieldsByChart?.[chartId] || control.field;
+      if (datasetId && field) {
+        return [{ controlId: control.id, datasetId, field }];
+      }
+    }
+    return [];
+  });
+}
+
 function buildFieldsByChart(
   widgets: ChartWidget[],
   label: string,
@@ -399,12 +451,7 @@ function resolveDimensionField(widget: ChartWidget, label: string, preferredFiel
   const normalizedLabel = label.trim();
   const exactLabelMatch = dimensions.find((dimension) => dimension.label === normalizedLabel);
   const exactFieldMatch = dimensions.find((dimension) => dimension.field === normalizedLabel);
-  const looseLabelMatch =
-    normalizedLabel && normalizedLabel !== '维度'
-      ? dimensions.find((dimension) => dimension.label.includes(normalizedLabel) || normalizedLabel.includes(dimension.label))
-      : undefined;
-
-  return exactLabelMatch?.field ?? exactFieldMatch?.field ?? looseLabelMatch?.field ?? dimensions[0].field;
+  return exactLabelMatch?.field ?? exactFieldMatch?.field ?? dimensions[0].field;
 }
 
 function getWidgetDimensions(widget: ChartWidget): WidgetDimension[] {

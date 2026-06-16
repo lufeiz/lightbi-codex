@@ -27,6 +27,9 @@ export function App() {
           <Route path="/embed/:token" element={<PublicDashboardPage embed />} />
           <Route element={<RequireAuth />}>
             <Route element={<AppShell />}>
+              <Route path="/dashboards" element={<ChartsPage />} />
+              <Route path="/dashboards/new" element={<ChartEditorPage />} />
+              <Route path="/dashboards/:id/edit" element={<ChartEditorPage />} />
               <Route path="/charts" element={<ChartsPage />} />
               <Route path="/charts/new" element={<ChartEditorPage />} />
               <Route path="/charts/:id/edit" element={<ChartEditorPage />} />
@@ -34,10 +37,10 @@ export function App() {
               <Route path="/data-sources" element={<DataSourcesPage />} />
               <Route path="/datasets" element={<DatasetsPage />} />
               <Route path="/workspaces" element={<WorkspacesPage />} />
-              <Route path="/" element={<Navigate to="/charts" replace />} />
+              <Route path="/" element={<Navigate to="/dashboards" replace />} />
             </Route>
           </Route>
-          <Route path="*" element={<Navigate to="/charts" replace />} />
+          <Route path="*" element={<Navigate to="/dashboards" replace />} />
         </Routes>
       </Suspense>
     </BrowserRouter>

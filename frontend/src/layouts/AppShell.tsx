@@ -44,9 +44,9 @@ export function AppShell() {
       <Layout>
         <Header className="app-header">
           <Space size={16} className="app-header-left">
-            <Link to="/charts" className="brand">
+            <Link to="/dashboards" className="brand">
               <PieChartOutlined />
-              <span>智能BI</span>
+              <span>仪表盘</span>
             </Link>
             <Link to="/data-sources" className="header-nav-link">
               <DatabaseOutlined />

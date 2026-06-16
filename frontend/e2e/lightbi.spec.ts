@@ -49,6 +49,92 @@ test('login, list, publish viewer page and rollback path are wired', async ({ pa
   await expect(page.getByText('v1')).toBeVisible();
 });
 
+test('published dashboard adapts desktop and mobile with render performance metrics', async ({ page }) => {
+  await page.addInitScript(() => {
+    const target = window as typeof window & { __lightbiMetrics?: Array<{ name: string; value: number }> };
+    target.__lightbiMetrics = [];
+    window.addEventListener('lightbi:performance', (event) => {
+      target.__lightbiMetrics?.push((event as CustomEvent).detail);
+    });
+  });
+  await page.route('**/api/public/shares/twelve-widget-token', async (route) => {
+    await route.fulfill({ contentType: 'application/json', body: apiEnvelope(twelveWidgetPublishedDashboard()) });
+  });
+
+  await page.setViewportSize({ width: 1366, height: 900 });
+  await page.goto('/share/twelve-widget-token');
+  await expect(page.getByText(/刷新时间/)).toBeVisible();
+  await expect.poll(async () =>
+    page.evaluate(() => ((window as typeof window & { __lightbiMetrics?: Array<{ name: string }> }).__lightbiMetrics ?? []).filter((metric) => metric.name === 'CHART_RENDER').length)
+  ).toBeGreaterThanOrEqual(12);
+
+  const chartRenderValues = await page.evaluate(() =>
+    ((window as typeof window & { __lightbiMetrics?: Array<{ name: string; value: number }> }).__lightbiMetrics ?? [])
+      .filter((metric) => metric.name === 'CHART_RENDER')
+      .map((metric) => metric.value)
+      .sort((a, b) => a - b)
+  );
+  const p95 = chartRenderValues[Math.max(0, Math.ceil(chartRenderValues.length * 0.95) - 1)];
+  console.info(`V6 CHART_RENDER P95 ${p95.toFixed(2)}ms`);
+  expect(p95).toBeLessThanOrEqual(300);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.published-dashboard-mobile-list')).toBeVisible();
+  await expect(page.locator('.published-widget-mobile')).toHaveCount(12);
+  await expect(page.getByRole('button', { name: '清除筛选' })).toBeVisible();
+  const widthState = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  expect(widthState.scrollWidth).toBeLessThanOrEqual(widthState.clientWidth + 1);
+});
+
+test('viewer filter candidates use backend distinct values and show impact scope', async ({ page }) => {
+  const distinctRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/datasets/1/distinct-values') {
+      distinctRequests.push(url.search);
+    }
+  });
+
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/dashboards/1');
+  await expect(page.getByText('影响 1 个组件')).toBeVisible();
+  await expect.poll(() => distinctRequests.length).toBeGreaterThan(0);
+  expect(distinctRequests.at(-1)).toContain('field=region');
+
+  await page.locator('.published-dashboard-filter-bar .filter-value-select').click();
+  await page.locator('.ant-select-item-option', { hasText: '华北' }).click();
+  await expect(page.getByText('区域：华北')).toBeVisible();
+});
+
+test('dashboard information architecture uses dashboard routes and metrics', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await expect(page.getByRole('link', { name: /仪表盘/ })).toBeVisible();
+  await expect(page.getByText('首图类型')).toHaveCount(0);
+  await expect(page.getByText('组件数')).toBeVisible();
+  await expect(page.getByText('数据健康')).toBeVisible();
+
+  await page.goto('/dashboards');
+  await expect(page.getByText('销售总览')).toBeVisible();
+  await expect(page).toHaveURL(/\/dashboards$/);
+
+  await page.goto('/dashboards/1/edit');
+  await expect(page.getByPlaceholder('请输入仪表盘名称')).toHaveValue('销售总览');
+
+  await page.goto('/charts/1/edit');
+  await expect(page.getByPlaceholder('请输入仪表盘名称')).toHaveValue('销售总览');
+});
+
 test('editor can add a widget, configure dataset, update preview and save', async ({ page }) => {
   const previewQueryRequests: string[] = [];
   page.on('request', (request) => {
@@ -123,7 +209,101 @@ test('editor can add a widget, configure dataset, update preview and save', asyn
   expect(metrics.map((metric) => metric.name)).toContain('EDITOR_INTERACTION');
   expect(Math.max(...metrics.filter((metric) => metric.name === 'EDITOR_INTERACTION').map((metric) => metric.value))).toBeLessThanOrEqual(300);
   await page.getByRole('button', { name: /保存$/ }).click();
-  await expect(page).toHaveURL(/\/charts\/2\/edit$/);
+  await expect(page).toHaveURL(/\/dashboards\/2\/edit$/);
+});
+
+test('editor efficiency tools support copy undo redo align and undoable delete', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/charts/new');
+  await page.getByRole('button', { name: '柱状图', exact: true }).click();
+  await page.getByRole('button', { name: '折线图', exact: true }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(2);
+
+  await page.getByRole('button', { name: '复制' }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(3);
+
+  await page.getByRole('button', { name: '撤销' }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(2);
+
+  await page.getByRole('button', { name: '重做' }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(3);
+
+  await page.getByRole('button', { name: '左对齐' }).click();
+  const leftPositions = await page.locator('.chart-widget').evaluateAll((nodes) =>
+    nodes.map((node) => Number.parseInt((node as HTMLElement).style.left || '0', 10))
+  );
+  expect(leftPositions.at(-1)).toBe(Math.min(...leftPositions));
+
+  await page.getByRole('button', { name: '删除' }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(2);
+
+  await page.getByRole('button', { name: '撤销' }).click();
+  await expect(page.locator('.chart-widget')).toHaveCount(3);
+});
+
+test('query builder exposes grouped configuration flow and inline validation reasons', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/charts/new');
+  await page.getByRole('button', { name: '柱状图', exact: true }).click();
+
+  const builder = page.locator('.query-builder-flow');
+  await expect(builder).toContainText('1 数据集');
+  await expect(builder).toContainText('2 字段');
+  await expect(builder).toContainText('3 聚合');
+  await expect(builder).toContainText('4 过滤排序 TopN');
+  await expect(builder).toContainText('5 样式');
+  await expect(builder.locator('.preview-query-alert')).toContainText('请选择数据集');
+  await expect(builder.locator('.preview-query-alert')).toContainText(/柱状图\s*至少需要 1 个维度/);
+  await expect(builder.locator('.preview-query-alert')).toContainText(/柱状图\s*至少需要 1 个指标/);
+});
+
+test('editor can manage asset metadata and persist clean dashboard payload', async ({ page }) => {
+  const savedPayloads: Array<Record<string, unknown>> = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === '/api/charts/1' && request.method() === 'PUT' && request.postData()) {
+      savedPayloads.push(JSON.parse(request.postData() ?? '{}'));
+    }
+  });
+
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/charts/1/edit');
+  await page.getByRole('button', { name: '资产信息' }).click();
+  await page.getByLabel('资产描述').fill('华东销售负责人每日复盘看板');
+  await page.getByLabel('所属目录').click();
+  await page.getByTitle('经营分析').click();
+  await page.getByLabel('资产标签').click();
+  await page.getByTitle('核心看板').click();
+  await page.getByTitle('销售').click();
+  await page.getByRole('button', { name: /完\s*成/ }).click();
+
+  await page.getByRole('button', { name: /保存$/ }).click();
+  expect(savedPayloads.at(-1)).toMatchObject({
+    description: '华东销售负责人每日复盘看板',
+    groupId: 1,
+    tagIds: [1, 2]
+  });
+  expect(JSON.stringify(savedPayloads.at(-1))).not.toContain('previewRows');
+
+  await page.goto('/charts');
+  await page.locator('.filter-panel .ant-select').nth(2).click();
+  await page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option', { hasText: '经营分析' }).click();
+  await page.locator('.filter-panel .ant-select').nth(3).click();
+  await page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option', { hasText: '核心看板' }).click();
+  await page.getByRole('button', { name: /筛\s*选/ }).click();
+  await expect(page.getByText('华东销售负责人每日复盘看板')).toBeVisible();
 });
 
 test('chart config accepts SQL metric card and dimension-only detail table preview', async ({ page }) => {
@@ -208,23 +388,151 @@ test('dataset creation can test SQL, infer fields and save confirmed schema', as
 
   await page.goto('/datasets');
   await page.getByRole('button', { name: '新建数据集' }).click();
+  const wizardSteps = page.locator('.dataset-wizard-steps .ant-steps-item');
+  await expect(page.locator('.dataset-wizard-steps')).toContainText('选择数据源');
+  await expect(page.locator('.dataset-wizard-steps')).toContainText('SQL 测试');
+  await expect(page.locator('.dataset-wizard-steps')).toContainText('字段识别');
+  await expect(page.locator('.dataset-wizard-steps')).toContainText('字段确认');
+  await expect(page.locator('.dataset-wizard-steps')).toContainText('保存配置');
+  expect(await wizardSteps.count()).toBeLessThanOrEqual(5);
+
   await page.getByRole('textbox', { name: '* 名称' }).fill('SQL 自动识别');
   await page.locator('.asset-form .ant-select').nth(1).click();
   await page.getByTitle(/MySQL 分析库/).click();
-  await page.getByLabel('只读 SQL').fill('SELECT region, revenue FROM orders');
-  await expect(page.getByText('尚未识别字段')).toBeVisible();
+  await page.getByRole('button', { name: /下\s*一\s*步/ }).click();
 
+  await page.getByLabel('只读 SQL').fill('SELECT region, revenue FROM orders');
   await page.getByRole('button', { name: '测试 SQL 并识别字段' }).click();
+  await expect(page.locator('.dataset-preview-table')).toContainText('华东');
+  await page.getByRole('button', { name: /下\s*一\s*步/ }).click();
+
   await expect(page.locator('.dataset-field-confirm-table')).toContainText('region');
   await expect(page.locator('.dataset-field-confirm-table')).toContainText('revenue');
-  await expect(page.locator('.dataset-preview-table')).toContainText('华东');
+  await page.getByRole('button', { name: /下\s*一\s*步/ }).click();
 
   await page.getByRole('button', { name: /保\s*存/ }).click();
+  await expect.poll(() => createDatasetPayloads.length).toBeGreaterThan(0);
   expect(createDatasetPayloads.at(-1)).toMatchObject({
     name: 'SQL 自动识别',
     dimensions: [{ name: 'region', label: 'region', type: 'string' }],
     measures: [{ name: 'revenue', label: 'revenue', type: 'number' }]
   });
+});
+
+test('share governance can create copy edit disable expire and delete links', async ({ page }) => {
+  const createdPayloads: Array<Record<string, unknown>> = [];
+  const updatedPayloads: Array<Record<string, unknown>> = [];
+  const deletedIds: number[] = [];
+  const shareLinkRows: Array<Record<string, unknown>> = [
+    {
+      id: 9,
+      chartId: 1,
+      name: '过期链接',
+      token: 'expired-token',
+      tokenPrefix: 'expired-',
+      enabled: true,
+      allowEmbed: false,
+      expiresAt: '2026-06-10T00:00:00+08:00',
+      createdAt: now(),
+      updatedAt: now()
+    }
+  ];
+
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          (window as typeof window & { __copiedText?: string }).__copiedText = text;
+        }
+      }
+    });
+  });
+
+  await page.route('**/api/charts/1/share-links**', async (route) => {
+    const url = new URL(route.request().url());
+    const method = route.request().method();
+    const id = Number(url.pathname.split('/').at(-1));
+    if (method === 'GET') {
+      await route.fulfill({ contentType: 'application/json', body: apiEnvelope(shareLinkRows) });
+      return;
+    }
+    if (method === 'POST') {
+      const payload = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      createdPayloads.push(payload);
+      const row = {
+        id: 10,
+        chartId: 1,
+        token: 'new-share-token',
+        tokenPrefix: 'new-shar',
+        createdAt: now(),
+        updatedAt: now(),
+        ...payload
+      };
+      shareLinkRows.unshift(row);
+      await route.fulfill({ status: 201, contentType: 'application/json', body: apiEnvelope(row) });
+      return;
+    }
+    if (method === 'PUT') {
+      const payload = JSON.parse(route.request().postData() ?? '{}') as Record<string, unknown>;
+      updatedPayloads.push(payload);
+      const index = shareLinkRows.findIndex((row) => row.id === id);
+      shareLinkRows[index] = { ...shareLinkRows[index], ...payload, updatedAt: now() };
+      await route.fulfill({ contentType: 'application/json', body: apiEnvelope(shareLinkRows[index]) });
+      return;
+    }
+    if (method === 'DELETE') {
+      deletedIds.push(id);
+      const index = shareLinkRows.findIndex((row) => row.id === id);
+      if (index >= 0) {
+        shareLinkRows.splice(index, 1);
+      }
+      await route.fulfill({ contentType: 'application/json', body: apiEnvelope({ deleted: true }) });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto('/login');
+  await page.getByLabel('账号 / 邮箱 / 手机号').fill('admin');
+  await page.getByLabel('密码').fill('LightBI@123456');
+  await page.getByRole('button', { name: /登\s*录/ }).click();
+
+  await page.goto('/charts/1/edit');
+  await page.getByRole('button', { name: '发布治理' }).click();
+  await page.getByRole('tab', { name: '分享' }).click();
+  await expect(page.locator('.share-link-table')).toContainText('过期链接');
+  await expect(page.locator('.share-link-table')).toContainText('已过期');
+
+  await page.getByPlaceholder('链接名称').fill('客户分享');
+  await page.getByLabel('过期时间').fill('2026-07-01 00:00:00');
+  await page.locator('.share-create-form .ant-switch').nth(1).click();
+  await page.getByRole('button', { name: '创建' }).click();
+  await expect(page.locator('.share-link-table')).toContainText('客户分享');
+  expect(createdPayloads.at(-1)).toMatchObject({ name: '客户分享', enabled: true, allowEmbed: true });
+  expect(String(createdPayloads.at(-1)?.expiresAt)).toContain('2026-06-30');
+
+  const newShareRow = page.locator('.share-link-table .ant-table-row', { hasText: '客户分享' });
+  await newShareRow.getByRole('button', { name: '复制 URL' }).click();
+  expect(await page.evaluate(() => (window as typeof window & { __copiedText?: string }).__copiedText)).toContain('/share/new-share-token');
+  await newShareRow.getByRole('button', { name: '复制 embed code' }).click();
+  expect(await page.evaluate(() => (window as typeof window & { __copiedText?: string }).__copiedText)).toContain('/embed/new-share-token');
+
+  await newShareRow.getByRole('button', { name: '编辑' }).click();
+  const editModal = page.getByRole('dialog', { name: '编辑分享链接' });
+  await editModal.getByLabel('分享名称').fill('客户分享停用');
+  await expect(editModal.getByLabel('分享名称')).toHaveValue('客户分享停用');
+  await editModal.locator('.ant-switch').first().click();
+  await page.getByRole('button', { name: '确 定' }).click();
+  await expect(page.locator('.share-link-table')).toContainText('客户分享停用');
+  await expect(page.locator('.share-link-table')).toContainText('停用');
+  expect(updatedPayloads.at(-1)).toMatchObject({ name: '客户分享停用', enabled: false, allowEmbed: true });
+
+  const expiredRow = page.locator('.share-link-table .ant-table-row', { hasText: '过期链接' });
+  await expiredRow.getByRole('button', { name: '删除' }).click();
+  await page.getByRole('button', { name: '确 定' }).click();
+  await expect(page.locator('.share-link-table')).not.toContainText('过期链接');
+  expect(deletedIds).toContain(9);
 });
 
 test('viewer sees explicit write-disabled reasons on core create buttons', async ({ page }) => {
@@ -287,16 +595,62 @@ function mockResponse(path: string, method: string, searchParams = new URLSearch
     return { body: [{ id: 1, projectId: 1, userId: user.id, role: 'owner', user, createdAt: now(), updatedAt: now() }] };
   }
   if (path === '/chart-groups') {
-    return { body: [] };
+    return {
+      body: [
+        {
+          id: 1,
+          workspaceId: 1,
+          projectId: 1,
+          ownerId: 1,
+          parentId: null,
+          name: '经营分析',
+          sortOrder: 0,
+          createdBy: 1,
+          updatedBy: 1,
+          createdAt: now(),
+          updatedAt: now()
+        }
+      ]
+    };
   }
   if (path === '/chart-tags') {
-    return { body: [] };
+    return {
+      body: [
+        {
+          id: 1,
+          workspaceId: 1,
+          projectId: 1,
+          ownerId: 1,
+          name: '核心看板',
+          color: '#1677ff',
+          createdBy: 1,
+          updatedBy: 1,
+          createdAt: now(),
+          updatedAt: now()
+        },
+        {
+          id: 2,
+          workspaceId: 1,
+          projectId: 1,
+          ownerId: 1,
+          name: '销售',
+          color: '#52c41a',
+          createdBy: 1,
+          updatedBy: 1,
+          createdAt: now(),
+          updatedAt: now()
+        }
+      ]
+    };
   }
   if (path === '/charts/creators') {
     return { body: [user] };
   }
   if (path === '/charts' && method === 'POST') {
     return { body: chart(2, 'draft') };
+  }
+  if (path === '/charts/1' && method === 'PUT') {
+    return { body: chart(1, 'draft') };
   }
   if (path === '/charts') {
     return { body: { items: [chart()], total: 1, page: 1, pageSize: 12 } };
@@ -407,6 +761,16 @@ function mockResponse(path: string, method: string, searchParams = new URLSearch
       }
     };
   }
+  if (path === '/datasets/1/distinct-values') {
+    return {
+      body: {
+        field: searchParams.get('field') ?? 'region',
+        values: ['华北', '华东'],
+        total: 3,
+        truncated: true
+      }
+    };
+  }
   if (path === '/datasets/2/fields') {
     return {
       body: {
@@ -454,6 +818,10 @@ function mockResponse(path: string, method: string, searchParams = new URLSearch
   return { body: {} };
 }
 
+function apiEnvelope(data: unknown, status = 0) {
+  return JSON.stringify({ code: status, message: 'ok', data });
+}
+
 function publishedChart() {
   const source = chart();
   return {
@@ -465,6 +833,75 @@ function publishedChart() {
     config: source.config,
     createdAt: source.createdAt,
     updatedAt: source.updatedAt
+  };
+}
+
+function twelveWidgetPublishedDashboard() {
+  const source = publishedChart();
+  const widgets = Array.from({ length: 12 }, (_, index) => {
+    const column = index % 4;
+    const row = Math.floor(index / 4);
+    return {
+      ...source.config.widgets[0],
+      id: `widget_${index + 1}`,
+      type: 'column',
+      x: 24 + column * 280,
+      y: 24 + row * 210,
+      width: 260,
+      height: 180,
+      config: {
+        ...source.config.widgets[0].config,
+        title: `销售趋势 ${index + 1}`,
+        datasetId: 1,
+        datasetName: '销售订单',
+        dimensions: ['region'],
+        measures: ['revenue'],
+        query: {
+          dimensions: ['region'],
+          metrics: [{ field: 'revenue', aggregation: 'sum', alias: 'revenue' }],
+          filters: [],
+          sorts: [],
+          limit: 500,
+          timeComparison: 'none'
+        },
+        fieldLabels: { region: '区域', revenue: '销售额' }
+      }
+    };
+  });
+  const runtimeRows = Object.fromEntries(
+    widgets.map((widget, index) => [
+      widget.id,
+      [
+        { region: '华东', revenue: 120 + index },
+        { region: '华南', revenue: 96 + index }
+      ]
+    ])
+  );
+  return {
+    chart: {
+      ...source,
+      config: {
+        ...source.config,
+        widgets,
+        filters: {
+          ...source.config.filters,
+          dimensionControls: [
+            {
+              id: 'filter-region',
+              label: '区域',
+              chartIds: widgets.map((widget) => widget.id),
+              field: 'region',
+              fieldsByChart: Object.fromEntries(widgets.map((widget) => [widget.id, 'region'])),
+              values: []
+            }
+          ]
+        }
+      }
+    },
+    version: version(),
+    runtimeRows,
+    runtimeStatus: Object.fromEntries(widgets.map((widget) => [widget.id, runtimeStatus(widget.id)])),
+    embed: false
   };
 }
 
@@ -487,7 +924,7 @@ function chart(id = 1, status = 'published') {
     projectId: 1,
     ownerId: 1,
     name: '销售总览',
-    description: '已发布仪表盘',
+    description: '华东销售负责人每日复盘看板',
     type: 'line',
     status,
     groupId: null,
@@ -507,9 +944,20 @@ function chart(id = 1, status = 'published') {
             showLabel: true,
             showTooltip: true,
             showScrollbar: false,
+            datasetId: 1,
+            datasetName: '销售订单',
             dimensions: ['region'],
             measures: ['revenue'],
-            fieldLabels: { region: '区域', revenue: '收入' }
+            query: {
+              dimensions: ['region'],
+              metrics: [{ field: 'revenue', aggregation: 'sum', alias: 'revenue' }],
+              filters: [],
+              sorts: [],
+              limit: 500,
+              timeComparison: 'none'
+            },
+            fieldLabels: { region: '区域', revenue: '收入' },
+            previewRows: [{ region: '华东', revenue: 120 }]
           }
         }
       ],

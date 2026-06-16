@@ -220,6 +220,13 @@ export interface DatasetQueryResponse {
   expiresAt?: string;
 }
 
+export interface DatasetDistinctValuesResponse {
+  field: string;
+  values: Array<string | number | boolean>;
+  total: number;
+  truncated: boolean;
+}
+
 export interface ChartTag {
   id: number;
   workspaceId: number;

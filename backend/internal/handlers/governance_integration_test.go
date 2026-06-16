@@ -68,13 +68,18 @@ func TestGovernancePublishShareAndPermissionFlow(t *testing.T) {
 	}
 	token := responseString(t, shareResp.Body.Bytes(), "token")
 	if token == "" {
-		t.Fatal("expected share token to be returned once")
+		t.Fatal("expected share token to be returned on create")
+	}
+	if listResp := requestJSON(engine, http.MethodGet, "/api/charts/"+strconv.Itoa(chartID)+"/share-links", tokens.editor, nil); listResp.Code != http.StatusOK {
+		t.Fatalf("list share links status = %d, body = %s", listResp.Code, listResp.Body.String())
+	} else if body := listResp.Body.String(); !strings.Contains(body, `"token":"`+token+`"`) || strings.Contains(body, `"creator"`) || strings.Contains(body, `"email"`) {
+		t.Fatalf("protected share DTO missed token or leaked internal fields: %s", body)
 	}
 	if publicResp := requestJSON(engine, http.MethodGet, "/api/public/shares/"+token, "", nil); publicResp.Code != http.StatusOK {
 		t.Fatalf("public share status = %d, body = %s", publicResp.Code, publicResp.Body.String())
 	} else {
 		body := publicResp.Body.String()
-		if strings.Contains(body, `"creator"`) || strings.Contains(body, `"email"`) || !strings.Contains(body, `"runtimeStatus"`) {
+		if strings.Contains(body, `"creator"`) || strings.Contains(body, `"email"`) || strings.Contains(body, token) || !strings.Contains(body, `"runtimeStatus"`) {
 			t.Fatalf("public share DTO leaked internal fields or missed runtimeStatus: %s", body)
 		}
 	}
@@ -285,6 +290,51 @@ func TestDraftDatasetPreviewDoesNotPersistDataset(t *testing.T) {
 	var count int64
 	if err := db.Model(&models.Dataset{}).Where("name = ?", "草稿预览").Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("draft preview should not persist dataset, count=%d err=%v", count, err)
+	}
+}
+
+func TestDatasetDistinctValuesAreScopedAndLimited(t *testing.T) {
+	engine, db, tokens := setupGovernanceRouter(t)
+
+	fields := datatypes.JSON([]byte(`[{"name":"region","label":"区域","type":"string","role":"dimension"},{"name":"revenue","label":"销售额","type":"number","role":"measure"}]`))
+	rows := datatypes.JSON([]byte(`[{"region":"华东","revenue":120},{"region":"华南","revenue":96},{"region":"华东","revenue":88},{"region":"华北","revenue":66}]`))
+	dataset := models.Dataset{
+		ID:          701,
+		WorkspaceID: 1,
+		ProjectID:   1,
+		OwnerID:     1,
+		Name:        "候选值数据集",
+		Type:        models.DatasetTypeStandard,
+		SourceName:  "内置",
+		Fields:      fields,
+		Dimensions:  datatypes.JSON([]byte(`[{"name":"region","label":"区域","type":"string"}]`)),
+		Measures:    datatypes.JSON([]byte(`[{"name":"revenue","label":"销售额","type":"number"}]`)),
+		Rows:        rows,
+		CreatedBy:   1,
+		UpdatedBy:   1,
+	}
+	if err := db.Create(&dataset).Error; err != nil {
+		t.Fatalf("create dataset: %v", err)
+	}
+
+	resp := requestJSON(engine, http.MethodGet, "/api/datasets/701/distinct-values?field=region&limit=2", tokens.viewer, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("distinct values status = %d, body = %s", resp.Code, resp.Body.String())
+	}
+	body := resp.Body.String()
+	if !strings.Contains(body, `"field":"region"`) || !strings.Contains(body, `"total":3`) || !strings.Contains(body, `"truncated":true`) || !strings.Contains(body, `"华东"`) {
+		t.Fatalf("unexpected distinct values response: %s", body)
+	}
+
+	foreignDataset := dataset
+	foreignDataset.ID = 702
+	foreignDataset.ProjectID = 2
+	foreignDataset.Name = "隔离候选值数据集"
+	if err := db.Create(&foreignDataset).Error; err != nil {
+		t.Fatalf("create foreign dataset: %v", err)
+	}
+	if forbidden := requestJSON(engine, http.MethodGet, "/api/datasets/702/distinct-values?field=region&limit=2", tokens.viewer, nil); forbidden.Code != http.StatusForbidden {
+		t.Fatalf("expected cross-project distinct values to be forbidden, status = %d body = %s", forbidden.Code, forbidden.Body.String())
 	}
 }
 

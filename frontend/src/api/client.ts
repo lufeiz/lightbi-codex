@@ -12,6 +12,7 @@ import type {
   DataSourceSummary,
   DashboardShareLink,
   DashboardSubscription,
+  DatasetDistinctValuesResponse,
   DatasetDetail,
   DatasetField,
   DatasetMutationPayload,
@@ -439,6 +440,9 @@ export const api = {
   },
   datasetFields(id: number) {
     return request<{ dimensions: DatasetField[]; measures: DatasetField[] }>(`/datasets/${id}/fields`);
+  },
+  datasetDistinctValues(id: number, field: string, limit = 200) {
+    return request<DatasetDistinctValuesResponse>(`/datasets/${id}/distinct-values${toQuery({ field, limit })}`);
   },
   datasetRows(id: number) {
     return request<NonNullable<DatasetDetail['rows']>>(`/datasets/${id}/rows`);

@@ -87,6 +87,13 @@ type DatasetQueryResponse struct {
 	ExpiresAt  *time.Time           `json:"expiresAt,omitempty"`
 }
 
+type DatasetDistinctValuesResponse struct {
+	Field     string `json:"field"`
+	Values    []any  `json:"values"`
+	Total     int    `json:"total"`
+	Truncated bool   `json:"truncated"`
+}
+
 type datasetFieldMeta struct {
 	Name  string `json:"name"`
 	Label string `json:"label"`
@@ -120,6 +127,32 @@ func ExecuteDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config,
 
 func ExecuteDraftDatasetQuery(ctx context.Context, appDB *gorm.DB, cfg config.Config, queryContext DatasetQueryContext, dataset models.Dataset, req DatasetQueryRequest) (DatasetQueryResponse, error) {
 	return executeDatasetQueryForDataset(ctx, appDB, cfg, queryContext, dataset, req, false)
+}
+
+func DistinctDatasetValues(ctx context.Context, appDB *gorm.DB, cfg config.Config, queryContext DatasetQueryContext, datasetID uint, field string, limit int) (DatasetDistinctValuesResponse, error) {
+	var dataset models.Dataset
+	if err := appDB.Preload("DataSource").First(&dataset, datasetID).Error; err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	if err := validateDatasetQueryContext(dataset, queryContext); err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	fields, err := loadDatasetFields(dataset)
+	if err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return DatasetDistinctValuesResponse{}, errors.New("field is required")
+	}
+	if _, ok := fields[field]; !ok {
+		return DatasetDistinctValuesResponse{}, fmt.Errorf("invalid field %s", field)
+	}
+	limit = normalizeDistinctLimit(limit)
+	if dataset.Type == models.DatasetTypeSQL && dataset.DataSource != nil {
+		return executeSQLDatasetDistinctValues(ctx, cfg, dataset, field, limit)
+	}
+	return executeLegacyDatasetDistinctValues(dataset, field, limit)
 }
 
 func PreviewDraftSQLRows(ctx context.Context, cfg config.Config, dataset models.Dataset, limit int) (DatasetQueryResponse, error) {
@@ -463,6 +496,48 @@ func executeSQLDatasetQuery(ctx context.Context, cfg config.Config, dataset mode
 	return DatasetQueryResponse{Columns: columns, Rows: result}, nil
 }
 
+func executeSQLDatasetDistinctValues(ctx context.Context, cfg config.Config, dataset models.Dataset, field string, limit int) (DatasetDistinctValuesResponse, error) {
+	baseSQL, err := NormalizeReadOnlySQL(dataset.QuerySQL)
+	if err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	db, err := OpenDataSourceWithNetworkPolicy(ctx, *dataset.DataSource, cfg.DataSourceKey, cfg.DataSourceAllowedHosts, cfg.DataSourceBlockPrivateNetworks)
+	if err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	defer CloseDataSource(db)
+
+	quote := "`"
+	if dataset.DataSource.Type == models.DataSourceTypePostgres {
+		quote = `"`
+	}
+	fieldExpr := quoteIdentifier(field, quote)
+	query := fmt.Sprintf("SELECT DISTINCT %s FROM (%s) AS dataset_base WHERE %s IS NOT NULL ORDER BY %s ASC LIMIT ?", fieldExpr, baseSQL, fieldExpr, fieldExpr)
+	rows, err := db.QueryContext(ctx, query, limit+1)
+	if err != nil {
+		return DatasetDistinctValuesResponse{}, errors.New("dataset distinct values query failed")
+	}
+	defer rows.Close()
+
+	values := make([]any, 0, limit+1)
+	for rows.Next() {
+		var value any
+		if err := rows.Scan(&value); err != nil {
+			return DatasetDistinctValuesResponse{}, errors.New("dataset distinct values scan failed")
+		}
+		values = append(values, normalizeDistinctValue(value))
+	}
+	if err := rows.Err(); err != nil {
+		return DatasetDistinctValuesResponse{}, errors.New("dataset distinct values scan failed")
+	}
+	truncated := len(values) > limit
+	total := len(values)
+	if truncated {
+		values = values[:limit]
+	}
+	return DatasetDistinctValuesResponse{Field: field, Values: values, Total: total, Truncated: truncated}, nil
+}
+
 func BuildDatasetSQL(sourceType models.DataSourceType, baseSQL string, req DatasetQueryRequest, fields map[string]datasetFieldMeta) (string, []any, []DatasetQueryColumn, error) {
 	quote := "`"
 	if sourceType == models.DataSourceTypePostgres {
@@ -578,6 +653,38 @@ func executeLegacyDatasetQuery(dataset models.Dataset, req DatasetQueryRequest, 
 		columns = append(columns, DatasetQueryColumn{Name: safeAlias(metric.Alias), Label: labelOrName(field), Role: "measure", Type: "number"})
 	}
 	return DatasetQueryResponse{Columns: columns, Rows: out}, nil
+}
+
+func executeLegacyDatasetDistinctValues(dataset models.Dataset, field string, limit int) (DatasetDistinctValuesResponse, error) {
+	var sourceRows []map[string]any
+	if err := json.Unmarshal(dataset.Rows, &sourceRows); err != nil {
+		return DatasetDistinctValuesResponse{}, err
+	}
+	seen := map[string]any{}
+	for _, row := range sourceRows {
+		value, ok := row[field]
+		if !ok || value == nil {
+			continue
+		}
+		seen[distinctValueKey(value)] = normalizeDistinctValue(value)
+	}
+	keys := make([]string, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return fmt.Sprint(seen[keys[i]]) < fmt.Sprint(seen[keys[j]])
+	})
+	values := make([]any, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, seen[key])
+	}
+	total := len(values)
+	truncated := total > limit
+	if truncated {
+		values = values[:limit]
+	}
+	return DatasetDistinctValuesResponse{Field: field, Values: values, Total: total, Truncated: truncated}, nil
 }
 
 func NormalizeReadOnlySQL(query string) (string, error) {
@@ -790,6 +897,36 @@ func datasetQueryCacheKey(datasetID uint, req DatasetQueryRequest) (string, erro
 	}
 	hash := sha256.Sum256(append([]byte(strconv.FormatUint(uint64(datasetID), 10)+":"), payload...))
 	return hex.EncodeToString(hash[:]), nil
+}
+
+func normalizeDistinctLimit(limit int) int {
+	if limit <= 0 {
+		return 100
+	}
+	if limit > 500 {
+		return 500
+	}
+	return limit
+}
+
+func distinctValueKey(value any) string {
+	normalized := normalizeDistinctValue(value)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return fmt.Sprint(normalized)
+	}
+	return string(raw)
+}
+
+func normalizeDistinctValue(value any) any {
+	switch typed := value.(type) {
+	case []byte:
+		return string(typed)
+	case sql.RawBytes:
+		return string(typed)
+	default:
+		return typed
+	}
 }
 
 func quoteIdentifier(name string, quote string) string {

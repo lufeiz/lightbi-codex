@@ -15,10 +15,10 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   if (accessToken) {
-    return <Navigate to="/charts" replace />;
+    return <Navigate to="/dashboards" replace />;
   }
 
-  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/charts';
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? '/dashboards';
 
   const handleFinish = async (values: LoginPayload) => {
     setSubmitting(true);

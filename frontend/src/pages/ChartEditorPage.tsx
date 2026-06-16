@@ -1,5 +1,6 @@
-import { Alert, Button, Input, message, Space, Spin, Typography } from 'antd';
-import { useCallback, useEffect, useState } from 'react';
+import { AlignLeftOutlined, CopyOutlined, DeleteOutlined, RedoOutlined, UndoOutlined } from '@ant-design/icons';
+import { Alert, Button, Drawer, Form, Input, message, Select, Space, Spin, Typography } from 'antd';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '@/api/client';
@@ -8,25 +9,35 @@ import { DashboardGovernancePanel } from '@/features/charts/DashboardGovernanceP
 import { DashboardFilterBar } from '@/features/charts/DashboardFilterBar';
 import { DesignerCanvas } from '@/features/charts/DesignerCanvas';
 import { validateChartDocument } from '@/features/charts/chartConfigValidation';
-import { chartTypeGroups } from '@/features/charts/chartUtils';
+import { chartTypeGroups, groupToSelectOptions } from '@/features/charts/chartUtils';
 import { useAuthStore } from '@/store/authStore';
 import { useDesignerStore } from '@/store/designerStore';
 import { useEditorToolbarStore } from '@/store/editorToolbarStore';
 import { hasProjectWriteAccess, useWorkspaceStore } from '@/store/workspaceStore';
-import type { ChartMutationPayload, ChartStatus, ChartType } from '@/types/domain';
+import type { ChartGroup, ChartMutationPayload, ChartStatus, ChartTag, ChartType } from '@/types/domain';
 import { chartTypeLabels } from '@/types/domain';
+
+interface AssetInfoFormValues {
+  description: string;
+  groupId: number | null;
+  tagIds: number[];
+}
 
 export function ChartEditorPage() {
   const navigate = useNavigate();
   const params = useParams();
   const chartId = params.id ? Number(params.id) : undefined;
+  const [assetForm] = Form.useForm<AssetInfoFormValues>();
   const [loading, setLoading] = useState(Boolean(chartId));
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [configCollapsed, setConfigCollapsed] = useState(false);
   const [dataSourceCollapsed, setDataSourceCollapsed] = useState(false);
+  const [assetInfoOpen, setAssetInfoOpen] = useState(false);
   const [governanceOpen, setGovernanceOpen] = useState(false);
+  const [groups, setGroups] = useState<ChartGroup[]>([]);
+  const [tags, setTags] = useState<ChartTag[]>([]);
   const user = useAuthStore((state) => state.user);
   const workspaceId = useWorkspaceStore((state) => state.workspaceId);
   const projectId = useWorkspaceStore((state) => state.projectId);
@@ -34,13 +45,36 @@ export function ChartEditorPage() {
   const canWrite = hasProjectWriteAccess(user, projectRole);
   const meta = useDesignerStore((state) => state.meta);
   const widgets = useDesignerStore((state) => state.widgets);
+  const selectedWidgetId = useDesignerStore((state) => state.selectedWidgetId);
+  const canUndo = useDesignerStore((state) => state.historyPast.length > 0);
+  const canRedo = useDesignerStore((state) => state.historyFuture.length > 0);
   const reset = useDesignerStore((state) => state.reset);
   const load = useDesignerStore((state) => state.load);
   const setMeta = useDesignerStore((state) => state.setMeta);
   const addWidget = useDesignerStore((state) => state.addWidget);
+  const deleteWidget = useDesignerStore((state) => state.deleteWidget);
+  const duplicateSelectedWidget = useDesignerStore((state) => state.duplicateSelectedWidget);
+  const alignSelectedWidget = useDesignerStore((state) => state.alignSelectedWidget);
+  const undo = useDesignerStore((state) => state.undo);
+  const redo = useDesignerStore((state) => state.redo);
   const toPayload = useDesignerStore((state) => state.toPayload);
   const setToolbar = useEditorToolbarStore((state) => state.setToolbar);
   const clearToolbar = useEditorToolbarStore((state) => state.clearToolbar);
+  const scope = useMemo(() => ({ workspaceId: workspaceId ?? undefined, projectId: projectId ?? undefined }), [projectId, workspaceId]);
+  const groupOptions = useMemo(() => groupToSelectOptions(groups), [groups]);
+  const tagOptions = useMemo(() => tags.map((tag) => ({ value: tag.id, label: tag.name })), [tags]);
+
+  const fetchAssetDictionaries = useCallback(async () => {
+    try {
+      const [groupData, tagData] = await Promise.all([api.groups(scope), api.tags(scope)]);
+      setGroups(groupData);
+      setTags(tagData);
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '加载资产信息选项失败');
+      setGroups([]);
+      setTags([]);
+    }
+  }, [scope]);
 
   const bootstrap = useCallback(async () => {
     setLoading(true);
@@ -72,6 +106,10 @@ export function ChartEditorPage() {
     void bootstrap();
   }, [bootstrap]);
 
+  useEffect(() => {
+    void fetchAssetDictionaries();
+  }, [fetchAssetDictionaries]);
+
   const handleDashboardNameBlur = () => {
     if (!meta.name.trim()) {
       setMeta({ name: '未命名仪表盘' });
@@ -80,6 +118,31 @@ export function ChartEditorPage() {
 
   const handleAddWidget = (type: ChartType) => {
     addWidget(type);
+  };
+
+  const openAssetInfo = () => {
+    assetForm.setFieldsValue({
+      description: meta.description,
+      groupId: meta.groupId,
+      tagIds: meta.tagIds
+    });
+    setAssetInfoOpen(true);
+  };
+
+  const submitAssetInfo = async () => {
+    const values = await assetForm.validateFields();
+    setMeta({
+      description: values.description ?? '',
+      groupId: values.groupId ?? null,
+      tagIds: values.tagIds ?? []
+    });
+    setAssetInfoOpen(false);
+  };
+
+  const warnIfPublishingUngovernedAsset = (statusOverride?: ChartStatus) => {
+    if (statusOverride === 'published' && (!meta.groupId || meta.tagIds.length === 0)) {
+      message.warning('建议发布前补充目录和标签，方便后续治理与复用');
+    }
   };
 
   const buildMutationPayload = useCallback((statusOverride?: ChartStatus): ChartMutationPayload | null => {
@@ -112,8 +175,9 @@ export function ChartEditorPage() {
     if (statusOverride) {
       payload.status = statusOverride;
     }
+    warnIfPublishingUngovernedAsset(statusOverride);
     return payload;
-  }, [canWrite, chartId, meta.name, projectId, toPayload, widgets.length, workspaceId]);
+  }, [canWrite, chartId, meta.groupId, meta.name, meta.tagIds.length, projectId, toPayload, widgets.length, workspaceId]);
 
   const saveDashboard = useCallback(async (statusOverride?: ChartStatus) => {
     const payload = buildMutationPayload(statusOverride);
@@ -125,7 +189,7 @@ export function ChartEditorPage() {
       setMeta({ status: statusOverride });
     }
     if (!chartId) {
-      navigate(`/charts/${saved.id}/edit`, { replace: true });
+      navigate(`/dashboards/${saved.id}/edit`, { replace: true });
     }
     return saved;
   }, [buildMutationPayload, chartId, navigate, setMeta]);
@@ -161,7 +225,7 @@ export function ChartEditorPage() {
       } else {
         const saved = await api.createChart(payload);
         setMeta({ status: 'published' });
-        navigate(`/charts/${saved.id}/edit`, { replace: true });
+        navigate(`/dashboards/${saved.id}/edit`, { replace: true });
       }
       message.success('仪表盘已发布');
     } catch (err) {
@@ -184,7 +248,7 @@ export function ChartEditorPage() {
       } else {
         const saved = await api.createChart(payload);
         setMeta({ status: 'published' });
-        navigate(`/charts/${saved.id}/edit`, { replace: true });
+        navigate(`/dashboards/${saved.id}/edit`, { replace: true });
       }
       message.success('仪表盘已保存并发布');
     } catch (err) {
@@ -242,11 +306,31 @@ export function ChartEditorPage() {
             onBlur={handleDashboardNameBlur}
           />
         </div>
-        {chartId && (
-          <Button onClick={() => setGovernanceOpen(true)}>
-            发布治理
+        <Space className="editor-tool-actions" wrap>
+          <Button icon={<UndoOutlined />} disabled={!canWrite || !canUndo} onClick={undo}>
+            撤销
           </Button>
-        )}
+          <Button icon={<RedoOutlined />} disabled={!canWrite || !canRedo} onClick={redo}>
+            重做
+          </Button>
+          <Button icon={<CopyOutlined />} disabled={!canWrite || !selectedWidgetId} onClick={duplicateSelectedWidget}>
+            复制
+          </Button>
+          <Button icon={<AlignLeftOutlined />} disabled={!canWrite || !selectedWidgetId || widgets.length < 2} onClick={() => alignSelectedWidget('left')}>
+            左对齐
+          </Button>
+          <Button danger icon={<DeleteOutlined />} disabled={!canWrite || !selectedWidgetId} onClick={() => selectedWidgetId && deleteWidget(selectedWidgetId)}>
+            删除
+          </Button>
+          <Button onClick={openAssetInfo}>
+            资产信息
+          </Button>
+          {chartId && (
+            <Button onClick={() => setGovernanceOpen(true)}>
+              发布治理
+            </Button>
+          )}
+        </Space>
       </header>
       <DashboardFilterBar />
 
@@ -294,6 +378,35 @@ export function ChartEditorPage() {
           />
         </aside>
       </div>
+      <Drawer
+        width={480}
+        title="资产信息"
+        open={assetInfoOpen}
+        onClose={() => setAssetInfoOpen(false)}
+        extra={
+          <Space>
+            <Button onClick={() => setAssetInfoOpen(false)}>取消</Button>
+            <Button type="primary" disabled={!canWrite} onClick={() => void submitAssetInfo()}>
+              完成
+            </Button>
+          </Space>
+        }
+      >
+        <Form<AssetInfoFormValues> form={assetForm} layout="vertical" className="asset-info-form">
+          <Form.Item name="description" label="资产描述">
+            <Input.TextArea rows={4} placeholder="补充仪表盘用途、负责人或业务口径" disabled={!canWrite} />
+          </Form.Item>
+          <Form.Item name="groupId" label="所属目录">
+            <Select allowClear placeholder="选择目录" options={groupOptions} disabled={!canWrite} />
+          </Form.Item>
+          <Form.Item name="tagIds" label="资产标签">
+            <Select mode="multiple" allowClear placeholder="选择标签" options={tagOptions} disabled={!canWrite} />
+          </Form.Item>
+          {(!meta.groupId || meta.tagIds.length === 0) && (
+            <Alert type="warning" showIcon message="发布前建议补充目录和标签，方便治理、筛选和复用。" />
+          )}
+        </Form>
+      </Drawer>
       <DashboardGovernancePanel chartId={chartId} open={governanceOpen} onOpenChange={setGovernanceOpen} onRollback={bootstrap} />
     </div>
   );

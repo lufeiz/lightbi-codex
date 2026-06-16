@@ -1,5 +1,5 @@
 import { DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Table, Tag, Tooltip, Typography } from 'antd';
+import { Button, Form, Input, InputNumber, message, Modal, Select, Space, Steps, Table, Tag, Tooltip, Typography } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -15,6 +15,17 @@ interface DatasetFormValues extends Omit<DatasetMutationPayload, 'dimensions' | 
   measuresText: string;
 }
 
+const datasetWizardSteps = [
+  { title: '选择数据源' },
+  { title: 'SQL 测试' },
+  { title: '字段识别' },
+  { title: '字段确认' },
+  { title: '保存配置' }
+];
+
+const datasetBaseFieldNames: Array<keyof DatasetFormValues> = ['name', 'type', 'dataSourceId', 'sourceName', 'querySql', 'cacheTtl', 'refreshEvery', 'queryTimeout', 'rowLimit', 'description'];
+const datasetRuntimeFieldNames: Array<keyof DatasetFormValues> = ['cacheTtl', 'refreshEvery', 'queryTimeout', 'rowLimit'];
+
 export function DatasetsPage() {
   const navigate = useNavigate();
   const [form] = Form.useForm<DatasetFormValues>();
@@ -24,6 +35,7 @@ export function DatasetsPage() {
   const [saving, setSaving] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<DatasetSummary | null>(null);
+  const [wizardStep, setWizardStep] = useState(0);
   const [previewRows, setPreviewRows] = useState<DataRow[]>([]);
   const [previewing, setPreviewing] = useState(false);
   const [detectingFields, setDetectingFields] = useState(false);
@@ -65,6 +77,7 @@ export function DatasetsPage() {
   const openModal = async (item?: DatasetSummary) => {
     setEditing(item ?? null);
     setPreviewRows([]);
+    setWizardStep(0);
     if (item) {
       const detail = await api.dataset(item.id);
       form.setFieldsValue({
@@ -101,11 +114,11 @@ export function DatasetsPage() {
 
   const buildPayload = async (requireFields = true): Promise<DatasetMutationPayload> => {
     if (requireFields) {
-      await form.validateFields();
+      await form.validateFields(datasetRuntimeFieldNames);
     } else {
-      await form.validateFields(['name', 'type', 'dataSourceId', 'sourceName', 'querySql', 'cacheTtl', 'refreshEvery', 'queryTimeout', 'rowLimit', 'description']);
+      await form.validateFields(datasetBaseFieldNames);
     }
-    const values = form.getFieldsValue();
+    const values = form.getFieldsValue(true);
     const dimensions = parseFields(values.dimensionsText ?? '');
     const measures = parseFields(values.measuresText ?? '');
     if (requireFields && dimensions.length === 0 && measures.length === 0) {
@@ -160,6 +173,7 @@ export function DatasetsPage() {
       const result = await api.previewDatasetDraft({ ...payload, dimensions: [], measures: [] }, { dimensions: [], metrics: [], limit: 20 });
       applyInferredFields(result.columns);
       setPreviewRows(result.rows);
+      setWizardStep(2);
       message.success(`SQL 测试通过，已识别 ${result.columns.length} 个字段`);
     } catch (err) {
       message.error(err instanceof Error ? err.message : 'SQL 测试失败');
@@ -207,6 +221,31 @@ export function DatasetsPage() {
         await fetchItems();
       }
     });
+  };
+
+  const nextWizardStep = async () => {
+    try {
+      if (wizardStep === 0) {
+        await form.validateFields(['name', 'type', 'dataSourceId', 'sourceName']);
+      }
+      if (wizardStep === 1) {
+        await form.validateFields(['querySql']);
+      }
+      if (wizardStep === 3 && parsedFieldRows.length === 0) {
+        form.setFields([
+          { name: 'dimensionsText', errors: ['请先测试 SQL 并确认字段'] },
+          { name: 'measuresText', errors: ['请先测试 SQL 并确认字段'] }
+        ]);
+        throw new Error('请先测试 SQL 并确认字段');
+      }
+      setWizardStep((current) => Math.min(current + 1, datasetWizardSteps.length - 1));
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '请先完成当前步骤');
+    }
+  };
+
+  const previousWizardStep = () => {
+    setWizardStep((current) => Math.max(current - 1, 0));
   };
 
   const columns: ColumnsType<DatasetSummary> = [
@@ -261,89 +300,144 @@ export function DatasetsPage() {
       </div>
       <Table rowKey="id" loading={loading} columns={columns} dataSource={items} />
 
-      <Modal width={920} title={editing ? '编辑数据集' : '新建数据集'} open={modalOpen} okText="保存" confirmLoading={saving} onOk={() => void submit()} onCancel={() => setModalOpen(false)}>
-        <Form<DatasetFormValues> form={form} layout="vertical" className="asset-form">
-          <Space.Compact block>
-            <Form.Item name="name" label="名称" rules={[{ required: true }]} className="compact-form-item">
-              <Input />
-            </Form.Item>
-            <Form.Item name="type" label="类型" rules={[{ required: true }]} className="compact-form-item">
-              <Select options={[{ value: 'sql', label: datasetTypeLabels.sql }]} />
-            </Form.Item>
-          </Space.Compact>
-          <Space.Compact block>
-            <Form.Item name="dataSourceId" label="数据源" rules={[{ required: true, message: '请选择数据源' }]} className="compact-form-item">
-              <Select showSearch optionFilterProp="label" options={sourceOptions} />
-            </Form.Item>
-            <Form.Item name="sourceName" label="来源名称" className="compact-form-item">
-              <Input />
-            </Form.Item>
-          </Space.Compact>
-          <Form.Item name="querySql" label="只读 SQL" rules={[{ required: true }]}>
-            <Input.TextArea rows={5} />
-          </Form.Item>
-          <Space.Compact block>
-            <Form.Item name="dimensionsText" label="维度字段 name,label,type" className="compact-form-item">
-              <Input.TextArea rows={4} />
-            </Form.Item>
-            <Form.Item name="measuresText" label="指标字段 name,label,type" className="compact-form-item">
-              <Input.TextArea rows={4} />
-            </Form.Item>
-          </Space.Compact>
-          {parsedFieldRows.length > 0 && (
-            <Table
-              className="dataset-field-confirm-table"
-              size="small"
-              rowKey={(row) => `${row.role}-${row.name}`}
-              dataSource={parsedFieldRows}
-              columns={[
-                { title: '角色', dataIndex: 'role', width: 80 },
-                { title: '字段名', dataIndex: 'name' },
-                { title: '显示名', dataIndex: 'label' },
-                { title: '类型', dataIndex: 'type', width: 100 }
-              ]}
-              pagination={false}
-            />
-          )}
-          {parsedFieldRows.length === 0 && (
-            <Typography.Text type="secondary">尚未识别字段</Typography.Text>
-          )}
-          <Space.Compact block>
-            <Form.Item name="cacheTtl" label="缓存秒" className="compact-form-item">
-              <InputNumber min={0} className="full-width-control" />
-            </Form.Item>
-            <Form.Item name="refreshEvery" label="刷新间隔秒" className="compact-form-item">
-              <InputNumber min={0} className="full-width-control" />
-            </Form.Item>
-            <Form.Item name="queryTimeout" label="查询超时秒" className="compact-form-item">
-              <InputNumber min={1} className="full-width-control" />
-            </Form.Item>
-            <Form.Item name="rowLimit" label="最大行数" className="compact-form-item">
-              <InputNumber min={1} max={5000} className="full-width-control" />
-            </Form.Item>
-          </Space.Compact>
-          <Form.Item name="description" label="描述">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-          <Space wrap>
-            {!editing && (
-              <Button icon={<ReloadOutlined />} loading={detectingFields} onClick={() => void detectFields()}>
-                测试 SQL 并识别字段
+      <Modal
+        width={920}
+        title={editing ? '编辑数据集' : '新建数据集'}
+        open={modalOpen}
+        confirmLoading={saving}
+        onCancel={() => setModalOpen(false)}
+        footer={
+          <Space>
+            <Button onClick={() => setModalOpen(false)}>取消</Button>
+            {wizardStep > 0 && <Button onClick={previousWizardStep}>上一步</Button>}
+            {wizardStep < datasetWizardSteps.length - 1 && (
+              <Button type="primary" onClick={() => void nextWizardStep()}>
+                下一步
               </Button>
             )}
-            <Button icon={<EyeOutlined />} loading={previewing} onClick={() => void preview()}>
-              {editing ? '预览查询' : '预览前 20 行'}
-            </Button>
+            {wizardStep === datasetWizardSteps.length - 1 && (
+              <Button type="primary" loading={saving} onClick={() => void submit()}>
+                保存
+              </Button>
+            )}
           </Space>
-          {previewRows.length > 0 && (
-            <Table
-              className="dataset-preview-table"
-              size="small"
-              rowKey={(_, index) => String(index)}
-              dataSource={previewRows}
-              columns={Object.keys(previewRows[0] ?? {}).map((key) => ({ title: key, dataIndex: key }))}
-              pagination={false}
-            />
+        }
+      >
+        <Form<DatasetFormValues> form={form} layout="vertical" className="asset-form">
+          <Steps className="dataset-wizard-steps" size="small" current={wizardStep} items={datasetWizardSteps} />
+
+          {wizardStep === 0 && (
+            <section className="dataset-wizard-step">
+              <Space.Compact block>
+                <Form.Item name="name" label="名称" rules={[{ required: true }]} className="compact-form-item">
+                  <Input />
+                </Form.Item>
+                <Form.Item name="type" label="类型" rules={[{ required: true }]} className="compact-form-item">
+                  <Select options={[{ value: 'sql', label: datasetTypeLabels.sql }]} />
+                </Form.Item>
+              </Space.Compact>
+              <Space.Compact block>
+                <Form.Item name="dataSourceId" label="数据源" rules={[{ required: true, message: '请选择数据源' }]} className="compact-form-item">
+                  <Select showSearch optionFilterProp="label" options={sourceOptions} />
+                </Form.Item>
+                <Form.Item name="sourceName" label="来源名称" className="compact-form-item">
+                  <Input />
+                </Form.Item>
+              </Space.Compact>
+              <Form.Item name="description" label="描述">
+                <Input.TextArea rows={2} />
+              </Form.Item>
+            </section>
+          )}
+
+          {wizardStep === 1 && (
+            <section className="dataset-wizard-step">
+              <Form.Item name="querySql" label="只读 SQL" rules={[{ required: true }]}>
+                <Input.TextArea rows={7} />
+              </Form.Item>
+              <Space wrap>
+                {!editing && (
+                  <Button icon={<ReloadOutlined />} loading={detectingFields} onClick={() => void detectFields()}>
+                    测试 SQL 并识别字段
+                  </Button>
+                )}
+                <Button icon={<EyeOutlined />} loading={previewing} onClick={() => void preview()}>
+                  {editing ? '预览查询' : '预览前 20 行'}
+                </Button>
+              </Space>
+            </section>
+          )}
+
+          {wizardStep === 2 && (
+            <section className="dataset-wizard-step">
+              <Typography.Title level={5}>字段识别结果</Typography.Title>
+              <Typography.Text type="secondary">预览前 20 行并自动识别字段角色，下一步可人工确认。</Typography.Text>
+              {previewRows.length > 0 ? (
+                <Table
+                  className="dataset-preview-table"
+                  size="small"
+                  rowKey={(_, index) => String(index)}
+                  dataSource={previewRows}
+                  columns={Object.keys(previewRows[0] ?? {}).map((key) => ({ title: key, dataIndex: key }))}
+                  pagination={false}
+                />
+              ) : (
+                <Typography.Text type="secondary">请先测试 SQL 并识别字段</Typography.Text>
+              )}
+            </section>
+          )}
+
+          {wizardStep === 3 && (
+            <section className="dataset-wizard-step">
+              <Space.Compact block>
+                <Form.Item name="dimensionsText" label="维度字段 name,label,type" className="compact-form-item">
+                  <Input.TextArea rows={4} />
+                </Form.Item>
+                <Form.Item name="measuresText" label="指标字段 name,label,type" className="compact-form-item">
+                  <Input.TextArea rows={4} />
+                </Form.Item>
+              </Space.Compact>
+              {parsedFieldRows.length > 0 && (
+                <Table
+                  className="dataset-field-confirm-table"
+                  size="small"
+                  rowKey={(row) => `${row.role}-${row.name}`}
+                  dataSource={parsedFieldRows}
+                  columns={[
+                    { title: '角色', dataIndex: 'role', width: 80 },
+                    { title: '字段名', dataIndex: 'name' },
+                    { title: '显示名', dataIndex: 'label' },
+                    { title: '类型', dataIndex: 'type', width: 100 }
+                  ]}
+                  pagination={false}
+                />
+              )}
+              {parsedFieldRows.length === 0 && (
+                <Typography.Text type="secondary">尚未识别字段</Typography.Text>
+              )}
+            </section>
+          )}
+
+          {wizardStep === 4 && (
+            <section className="dataset-wizard-step">
+              <Space.Compact block>
+                <Form.Item name="cacheTtl" label="缓存秒" className="compact-form-item">
+                  <InputNumber min={0} className="full-width-control" />
+                </Form.Item>
+                <Form.Item name="refreshEvery" label="刷新间隔秒" className="compact-form-item">
+                  <InputNumber min={0} className="full-width-control" />
+                </Form.Item>
+                <Form.Item name="queryTimeout" label="查询超时秒" className="compact-form-item">
+                  <InputNumber min={1} className="full-width-control" />
+                </Form.Item>
+                <Form.Item name="rowLimit" label="最大行数" className="compact-form-item">
+                  <InputNumber min={1} max={5000} className="full-width-control" />
+                </Form.Item>
+              </Space.Compact>
+              <Typography.Text type="secondary">
+                保存前请确认 SQL 已测试、字段角色已确认，保存后图表配置会使用这些字段元数据。
+              </Typography.Text>
+            </section>
           )}
         </Form>
       </Modal>
